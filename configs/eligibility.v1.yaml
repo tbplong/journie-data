@@ -1,0 +1,7 @@
+version: eligibility/v1
+rag:
+  required: [name, coordinates, category]
+csp:
+  benchmark_mode: true
+  require_factual_opening_hours: true
+  allow_estimated_cost_with_provenance: true

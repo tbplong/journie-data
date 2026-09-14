@@ -1,0 +1,6 @@
+version: journie_category_prior_v1
+confidence: 0.4
+estimated_spend:
+  food.cafe: {min: 40000, typical: 70000, max: 120000}
+  food.restaurant: {min: 70000, typical: 150000, max: 300000}
+  food.food_court: {min: 50000, typical: 100000, max: 180000}

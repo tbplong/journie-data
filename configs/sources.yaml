@@ -1,0 +1,38 @@
+sources:
+  overture:
+    enabled: true
+    adapter_version: overture/v1
+    local_path: null
+    homepage: https://overturemaps.org/
+    access_method: open_snapshot
+    license: CDLA-Permissive-2.0 (verify per release and upstream source)
+    attribution_required: true
+    redistribution_allowed: null
+    terms_checked_at: '2026-09-12'
+  osm:
+    enabled: true
+    adapter_version: osm/v1
+    access_method: overpass
+    overpass_url: https://overpass-api.de/api/interpreter
+    license: ODbL-1.0
+    attribution_required: true
+    redistribution_allowed: true
+    terms_checked_at: '2026-09-12'
+  foursquare:
+    enabled: false
+    adapter_version: foursquare/v1
+    local_path: null
+    access_method: open_snapshot
+    license: verify-current-snapshot
+    attribution_required: true
+    redistribution_allowed: null
+    terms_checked_at: '2026-09-12'
+  visithcmc:
+    enabled: false
+    adapter_version: visithcmc/v1
+    start_urls: []
+    access_method: html_crawl
+    license: all-rights-reserved-unless-terms-state-otherwise
+    attribution_required: true
+    redistribution_allowed: false
+    terms_checked_at: '2026-09-12'

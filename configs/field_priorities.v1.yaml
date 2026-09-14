@@ -1,0 +1,9 @@
+version: field-priority/v1
+field_priority:
+  coordinates: [osm, overture, foursquare, visithcmc]
+  name: [visithcmc, osm, overture, foursquare]
+  category: [osm, overture, foursquare, visithcmc]
+  opening_hours_raw: [visithcmc, osm, overture, foursquare]
+  opening_hours_normalized: [visithcmc, osm, overture, foursquare]
+  description: [visithcmc, overture, osm, foursquare]
+  website: [visithcmc, overture, osm, foursquare]

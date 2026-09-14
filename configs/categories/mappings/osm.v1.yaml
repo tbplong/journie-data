@@ -1,0 +1,17 @@
+version: osm-category-map/v1
+mappings:
+  tourism=museum: attraction.museum
+  tourism=gallery: attraction.gallery
+  tourism=viewpoint: attraction.viewpoint
+  tourism=attraction: attraction.landmark
+  historic=monument: attraction.historic_site
+  historic=memorial: attraction.historic_site
+  leisure=park: nature.park
+  leisure=garden: nature.garden
+  amenity=restaurant: food.restaurant
+  amenity=cafe: food.cafe
+  amenity=food_court: food.food_court
+  amenity=cinema: entertainment.cinema
+  amenity=theatre: entertainment.performing_arts
+  shop=mall: shopping.mall
+  shop=department_store: shopping.department_store

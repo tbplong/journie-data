@@ -1,0 +1,20 @@
+version: journie_category_prior_v1
+confidence: 0.5
+duration_minutes:
+  attraction.museum: 120
+  attraction.landmark: 60
+  attraction.viewpoint: 45
+  attraction.historic_site: 75
+  attraction.gallery: 90
+  nature.park: 90
+  nature.garden: 75
+  food.cafe: 60
+  food.restaurant: 75
+  food.food_court: 60
+  shopping.market: 90
+  shopping.mall: 120
+  culture_religion.temple: 45
+  culture_religion.church: 45
+  culture_religion.pagoda: 45
+  entertainment.cinema: 150
+  entertainment.performing_arts: 120

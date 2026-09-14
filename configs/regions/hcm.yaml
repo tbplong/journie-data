@@ -1,0 +1,13 @@
+region:
+  id: hcm
+  name: Ho Chi Minh City
+  country_code: VN
+  timezone: Asia/Ho_Chi_Minh
+  bbox:
+    min_lon: 106.3498
+    min_lat: 10.3510
+    max_lon: 107.0175
+    max_lat: 11.1602
+  polygon_file: configs/geo/hcm.geojson
+  boundary_source: bootstrap_bbox_v1
+  boundary_note: Replace with a pinned authoritative administrative polygon before release.

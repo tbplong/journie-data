@@ -1,0 +1,15 @@
+[
+  {
+    "id": "visit-museum-1",
+    "name": "Bảo tàng Thành phố Hồ Chí Minh",
+    "latitude": 10.77917,
+    "longitude": 106.69980,
+    "description": "Một bảo tàng lịch sử tại trung tâm Thành phố Hồ Chí Minh.",
+    "address": "65 Lý Tự Trọng, Quận 1",
+    "opening_hours_raw": "Thứ 2 - Chủ nhật: 8:00 - 17:00",
+    "price_raw": "30.000 đồng/người",
+    "category": "Bảo tàng",
+    "source_url": "https://example.invalid/bao-tang-thanh-pho",
+    "crawl_timestamp": "2026-09-01T00:00:00Z"
+  }
+]

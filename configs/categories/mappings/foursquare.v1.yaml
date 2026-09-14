@@ -1,0 +1,14 @@
+version: foursquare-category-map/v1
+keyword_mappings:
+  coffee: food.cafe
+  cafe: food.cafe
+  restaurant: food.restaurant
+  museum: attraction.museum
+  gallery: attraction.gallery
+  historic: attraction.historic_site
+  park: nature.park
+  garden: nature.garden
+  market: shopping.market
+  mall: shopping.mall
+  cinema: entertainment.cinema
+  theater: entertainment.performing_arts

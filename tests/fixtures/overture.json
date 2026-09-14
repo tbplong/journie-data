@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ov-museum-1",
+    "geometry": {"type": "Point", "coordinates": [106.69978, 10.77915]},
+    "properties": {
+      "id": "ov-museum-1",
+      "names": {"primary": "Bảo tàng Thành phố Hồ Chí Minh"},
+      "categories": {"primary": "museum", "alternate": []},
+      "addresses": [{"freeform": "65 Lý Tự Trọng, Quận 1", "locality": "Ho Chi Minh City"}],
+      "websites": ["https://hcmc-museum.edu.vn/"],
+      "operating_status": "open"
+    }
+  },
+  {
+    "id": "ov-cafe-1",
+    "geometry": {"type": "Point", "coordinates": [106.7001, 10.7801]},
+    "properties": {
+      "id": "ov-cafe-1",
+      "names": {"primary": "Cà phê Mẫu"},
+      "categories": {"primary": "cafe", "alternate": []},
+      "addresses": [{"freeform": "Quận 1", "locality": "Ho Chi Minh City"}]
+    }
+  }
+]

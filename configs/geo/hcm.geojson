@@ -1,0 +1,14 @@
+{
+  "type": "FeatureCollection",
+  "name": "hcm-bootstrap-bbox",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"region_id": "hcm", "source": "bootstrap_bbox_v1"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[106.3498, 10.3510], [107.0175, 10.3510], [107.0175, 11.1602], [106.3498, 11.1602], [106.3498, 10.3510]]]
+      }
+    }
+  ]
+}

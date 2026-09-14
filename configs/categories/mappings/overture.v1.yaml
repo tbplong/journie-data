@@ -1,0 +1,16 @@
+version: overture-category-map/v1
+mappings:
+  cafe: food.cafe
+  coffee_shop: food.cafe
+  restaurant: food.restaurant
+  museum: attraction.museum
+  art_gallery: attraction.gallery
+  historical_place: attraction.historic_site
+  landmark_and_historical_building: attraction.landmark
+  park: nature.park
+  garden: nature.garden
+  shopping_mall: shopping.mall
+  market: shopping.market
+  church: culture_religion.church
+  temple: culture_religion.temple
+  pagoda: culture_religion.pagoda

@@ -1,0 +1,15 @@
+version: visithcmc-category-map/v1
+keyword_mappings:
+  museum: attraction.museum
+  bảo tàng: attraction.museum
+  historic: attraction.historic_site
+  lịch sử: attraction.historic_site
+  landmark: attraction.landmark
+  park: nature.park
+  công viên: nature.park
+  market: shopping.market
+  chợ: shopping.market
+  pagoda: culture_religion.pagoda
+  chùa: culture_religion.pagoda
+  church: culture_religion.church
+  nhà thờ: culture_religion.church

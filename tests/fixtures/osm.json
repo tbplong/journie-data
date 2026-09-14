@@ -1,0 +1,31 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 1001,
+      "lat": 10.77916,
+      "lon": 106.69979,
+      "tags": {
+        "name": "Bảo tàng Thành phố Hồ Chí Minh",
+        "tourism": "museum",
+        "opening_hours": "Mo-Su 08:00-17:00",
+        "charge": "30000 VND",
+        "website": "https://hcmc-museum.edu.vn",
+        "addr:city": "Ho Chi Minh City"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1002,
+      "lat": 10.7765,
+      "lon": 106.7009,
+      "tags": {
+        "name": "Công viên Mẫu",
+        "leisure": "park",
+        "opening_hours": "24/7",
+        "fee": "no",
+        "addr:city": "Ho Chi Minh City"
+      }
+    }
+  ]
+}

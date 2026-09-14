@@ -1,0 +1,11 @@
+[
+  {
+    "fsq_place_id": "fsq-cafe-1",
+    "name": "Cà phê Mẫu",
+    "latitude": 10.78011,
+    "longitude": 106.70011,
+    "locality": "Ho Chi Minh City",
+    "categories": [{"id": "13032", "name": "Cafe"}],
+    "date_refreshed": "2026-09-01T00:00:00Z"
+  }
+]
