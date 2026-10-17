@@ -29,7 +29,9 @@ def source(tmp_path):
     run = tmp_path / "run"
     run.mkdir()
     cases_path = tmp_path / "cases.jsonl"
-    gold_data = benchmark.load_cases(Path(__file__).with_name("cases.jsonl"))[0].model_dump()
+    gold_data = benchmark.load_cases(Path(__file__).resolve().parents[1] / "cases.jsonl")[
+        0
+    ].model_dump()
     output = gold_data["expected_output"]
     output.update(
         destination=None,

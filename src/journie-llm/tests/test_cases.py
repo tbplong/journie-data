@@ -12,7 +12,9 @@ from schema import ANNOTATION_RULES, Extraction
 def load_cases():
     return [
         json.loads(line)
-        for line in Path(__file__).with_name("cases.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (Path(__file__).resolve().parents[1] / "cases.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
 
 

@@ -16,7 +16,10 @@ from schema import Extraction, score
 
 @pytest.fixture(scope="module")
 def cases():
-    return {case.id: case for case in benchmark.load_cases(Path(__file__).with_name("cases.jsonl"))}
+    return {
+        case.id: case
+        for case in benchmark.load_cases(Path(__file__).resolve().parents[1] / "cases.jsonl")
+    }
 
 
 def config(provider="openai", **overrides):
@@ -35,7 +38,7 @@ def test_provider_config_file():
     configs = [
         ProviderConfig.model_validate(item)
         for item in json.loads(
-            Path(__file__).with_name("providers.json").read_text(encoding="utf-8")
+            (Path(__file__).resolve().parents[1] / "providers.json").read_text(encoding="utf-8")
         )
     ]
     assert len({cfg.name for cfg in configs}) == len(configs)

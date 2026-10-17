@@ -1,8 +1,6 @@
 # Supervisor Report Figures
 
-Source: completed run; 120 unique cases/model, 3 passes.
-Warm-ups excluded. PNG files are 300 DPI; SVG files retain vector graphics and text.
-Dataset SHA-256: `ae2c1fe0757f95c268948ec18e4392db60d8d057025292553af94b2c1e3629c2`.
+Source: completed run; 120 unique cases/model, 3 passes. Warm-ups excluded. PNG files are 300 DPI; SVG files retain vector graphics and text. Dataset SHA-256: `ae2c1fe0757f95c268948ec18e4392db60d8d057025292553af94b2c1e3629c2`.
 
 ## Models
 
@@ -15,28 +13,22 @@ Dataset SHA-256: `ae2c1fe0757f95c268948ec18e4392db60d8d057025292553af94b2c1e3629
 ## Figures
 
 ### Request outcomes
-Files: `01_outcome_breakdown.png` and `01_outcome_breakdown.svg`.
-Each attempt belongs to one outcome. Failures take precedence over JSON/schema errors, so empty responses are not double-counted. Fully correct means all scored gold fields and atoms match, not merely valid JSON.
+Files: `01_outcome_breakdown.png` and `01_outcome_breakdown.svg`. Each attempt belongs to one outcome. Failures take precedence over JSON/schema errors, so empty responses are not double-counted. Fully correct means all scored gold fields and atoms match, not merely valid JSON.
 
 ### Category accuracy
-Files: `02_category_accuracy.png` and `02_category_accuracy.svg`.
-Color and large numbers show complete-case accuracy; smaller numbers show schema validity. Each cell has 20 unique cases repeated three times, not 60 independent cases.
+Files: `02_category_accuracy.png` and `02_category_accuracy.svg`. Color and large numbers show complete-case accuracy; smaller numbers show schema validity. Each cell has 20 unique cases repeated three times, not 60 independent cases.
 
 ### Observed latency
-Files: `04_latency_distribution.png` and `04_latency_distribution.svg`.
-Empirical cumulative distributions include all attempts, regardless of validity/correctness. P50/P95 use the runner's inclusive linear interpolation. The logarithmic axis exposes the cloud Gemma tail without hiding failures. Latency includes network and server queueing, not deliberate inter-request pacing; there are no recorded timeouts here.
+Files: `04_latency_distribution.png` and `04_latency_distribution.svg`. Empirical cumulative distributions include all attempts, regardless of validity/correctness. P50/P95 use the runner's inclusive linear interpolation. The logarithmic axis exposes the cloud Gemma tail without hiding failures. Latency includes network and server queueing, not deliberate inter-request pacing; there are no recorded timeouts here.
 
 ### Quality-speed trade-off
-Files: `05_quality_vs_latency.png` and `05_quality_vs_latency.svg`.
-Dots use all-attempt median latency and complete-case accuracy. Horizontal spans extend to P95; they are latency tails, not uncertainty intervals. Upper-left is preferable. The plot establishes no quality or latency acceptance threshold.
+Files: `05_quality_vs_latency.png` and `05_quality_vs_latency.svg`. Dots use all-attempt median latency and complete-case accuracy. Horizontal spans extend to P95; they are latency tails, not uncertainty intervals. Upper-left is preferable. The plot establishes no quality or latency acceptance threshold.
 
 ### Unsupported facts with validity context
-Files: `07_hallucination_diagnostic.png` and `07_hallucination_diagnostic.svg`.
-Hallucination is conditional on schema-valid outputs. Numerator/denominator labels are shown alongside validity among all attempts. It includes nongold atoms or unsupported scalar/list facts, including incorrect extracted values, not a diagnosis of model intent. Different valid subsets prevent interpreting this rate independently of validity.
+Files: `07_hallucination_diagnostic.png` and `07_hallucination_diagnostic.svg`. Hallucination is conditional on schema-valid outputs. Numerator/denominator labels are shown alongside validity among all attempts. It includes nongold atoms or unsupported scalar/list facts, including incorrect extracted values, not a diagnosis of model intent. Different valid subsets prevent interpreting this rate independently of validity.
 
 ### Field-accuracy partition
-Files: `08_field_accuracy_diagnostic.png` and `08_field_accuracy_diagnostic.svg`.
-Populated and empty/null accuracy each pool the scorer's correct/total counts across all attempts. The populated group includes needs_clarification. Empty/null fields dominate the comparisons; high aggregate field accuracy is not equivalent to correct constraint extraction.
+Files: `08_field_accuracy_diagnostic.png` and `08_field_accuracy_diagnostic.svg`. Populated and empty/null accuracy each pool the scorer's correct/total counts across all attempts. The populated group includes needs_clarification. Empty/null fields dominate the comparisons; high aggregate field accuracy is not equivalent to correct constraint extraction.
 
 ## Key Numbers
 

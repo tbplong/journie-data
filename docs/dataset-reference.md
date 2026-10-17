@@ -1,10 +1,8 @@
 # Journie Dataset Reference
 
-This document describes every dataset emitted by `journie-data run`, its logical
-schema, and its intended use. It also explains how to inspect the quality reports.
+This document describes every dataset emitted by `journie-data run`, its logical schema, and its intended use. It also explains how to inspect the quality reports.
 
-For commands, run modes, boundaries, snapshots, and releases, see
-[`data-pipeline-usage.md`](data-pipeline-usage.md).
+For commands, run modes, boundaries, snapshots, and releases, see [`data-pipeline-usage.md`](data-pipeline-usage.md).
 
 ## 1. Start Here
 
@@ -47,8 +45,7 @@ GROUP BY category
 ORDER BY poi_count DESC;
 ```
 
-Parquet is the machine-readable source of truth. Report CSV files exist for manual
-inspection only.
+Parquet is the machine-readable source of truth. Report CSV files exist for manual inspection only.
 
 ## 2. Layout and File Conventions
 
@@ -74,24 +71,18 @@ data/
         `-- manifest.json
 ```
 
-Every artifact directory has one Parquet file and one manifest. Reports also have
-a CSV copy. Only staging can have `rejected_records.jsonl`.
+Every artifact directory has one Parquet file and one manifest. Reports also have a CSV copy. Only staging can have `rejected_records.jsonl`.
 
 ### Logical Types vs. Physical Parquet Types
 
-The schemas below are logical application contracts from the Pydantic models.
-Current writes use Polars schema inference rather than an explicit Arrow schema.
-Consequently:
+The schemas below are logical application contracts from the Pydantic models. Current writes use Polars schema inference rather than an explicit Arrow schema. Consequently:
 
 - A nullable field containing only nulls in one run can have physical type `Null`.
 - Model datetimes are currently serialized into Parquet as ISO 8601 strings.
 - An empty report can be a valid zero-row, zero-column Parquet file.
 - List and struct element types can vary when every collection is empty.
 
-Consumers should select columns defensively and use manifest `schema_version` as a
-contract label, not as proof that every physical Arrow type is fixed. The registered
-schemas are `staging/v1`, `poi/v1`, `poi-source/v1`, and `field-evidence/v1`.
-`identity-history/v1` and `report/v1` are currently manifest labels only.
+Consumers should select columns defensively and use manifest `schema_version` as a contract label, not as proof that every physical Arrow type is fixed. The registered schemas are `staging/v1`, `poi/v1`, `poi-source/v1`, and `field-evidence/v1`. `identity-history/v1` and `report/v1` are currently manifest labels only.
 
 ### Type Notation
 
@@ -107,13 +98,9 @@ schemas are `staging/v1`, `poi/v1`, `poi-source/v1`, and `field-evidence/v1`.
 
 ### `raw/<region>/<snapshot-id>/<source>/records.jsonl`
 
-One JSON object per line containing the records returned by the source adapter.
-Use it to inspect acquisition behavior or reprocess source records through a
-single-source command with `--input`.
+One JSON object per line containing the records returned by the source adapter. Use it to inspect acquisition behavior or reprocess source records through a single-source command with `--input`.
 
-This is not guaranteed to be the byte-for-byte upstream response. For example,
-OSM stores the response's `elements`, while remote Overture removes geometry and
-adds centroid coordinates derived from each feature bbox.
+This is not guaranteed to be the byte-for-byte upstream response. For example, OSM stores the response's `elements`, while remote Overture removes geometry and adds centroid coordinates derived from each feature bbox.
 
 ### Raw `manifest.json`
 
@@ -137,13 +124,9 @@ adds centroid coordinates derived from each feature bbox.
 
 ## 4. Staging Datasets
 
-Staging provides one normalized row per accepted source record. All adapters use
-the same logical `staging/v1` schema.
+Staging provides one normalized row per accepted source record. All adapters use the same logical `staging/v1` schema.
 
-Overture and OSM first select records matching at least one configured category
-mapping. Their raw snapshots retain every acquired record, but their staging tables
-contain only the mapped travel-domain subset. The run log records both
-`records_acquired` and `records_selected`.
+Overture and OSM first select records matching at least one configured category mapping. Their raw snapshots retain every acquired record, but their staging tables contain only the mapped travel-domain subset. The run log records both `records_acquired` and `records_selected`.
 
 ### Staging Files
 
@@ -227,9 +210,7 @@ Only selected sources appear in a run. Fixture mode selects all four sources.
 | `raw_tags` | JSON string | Preserved source-native tags, primarily OSM |
 | `raw_data` | JSON string | Preserved adapter acquisition record |
 
-The logical model allows a string-keyed map of interval lists. Output produced by
-the current opening-hours parser uses a struct with `mon` through `sun`, where each
-day contains zero or more `[start, end]` 24-hour time pairs:
+The logical model allows a string-keyed map of interval lists. Output produced by the current opening-hours parser uses a struct with `mon` through `sun`, where each day contains zero or more `[start, end]` 24-hour time pairs:
 
 ```json
 {
@@ -252,8 +233,7 @@ Use staging to:
 - Rebuild canonical data after resolver changes.
 - Inspect source-native data retained in `raw_data` and `raw_tags`.
 
-Do not use staging directly as a public POI catalog because it contains duplicate
-entities across sources.
+Do not use staging directly as a public POI catalog because it contains duplicate entities across sources.
 
 ### `rejected_records.jsonl`
 
@@ -265,14 +245,11 @@ This optional file contains one object per rejected acquisition record:
 | `reason` | string | `source_filter` or validation/normalization error |
 | `raw` | object | Rejected acquisition record |
 
-Review it when selected records do not survive normalization. A raw-to-staging
-count difference can also come from Overture/OSM domain selection and does not imply
-rejection. This file has no separate manifest and is not copied into releases.
+Review it when selected records do not survive normalization. A raw-to-staging count difference can also come from Overture/OSM domain selection and does not imply rejection. This file has no separate manifest and is not copied into releases.
 
 ## 5. Canonical Datasets
 
-Canonical tables describe resolved POIs and their lineage. Every canonical table
-has all staging artifact IDs as manifest parents.
+Canonical tables describe resolved POIs and their lineage. Every canonical table has all staging artifact IDs as manifest parents.
 
 ### `canonical/pois/pois.parquet`
 
@@ -329,13 +306,11 @@ One row per resolved POI. This is the main general-purpose catalog.
 | `rag_ineligibility_reasons` | list<string> | Failed RAG requirements |
 | `csp_ineligibility_reasons` | list<string> | Failed CSP requirements |
 
-Use `pois` for POI APIs, maps, analytics, manual review, or use cases that need all
-resolved records rather than only an eligible subset.
+Use `pois` for POI APIs, maps, analytics, manual review, or use cases that need all resolved records rather than only an eligible subset.
 
 ### `canonical/poi_sources/poi_sources.parquet`
 
-One row per canonical-to-source membership. A POI with records from three sources
-has three rows.
+One row per canonical-to-source membership. A POI with records from three sources has three rows.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -348,20 +323,13 @@ has three rows.
 | `first_seen_at` | datetime? | First observation when available |
 | `last_seen_at` | datetime? | Latest observation when available |
 
-Use it to trace a POI back to providers, display attribution links, count source
-support, or join canonical records back to staging.
+Use it to trace a POI back to providers, display attribution links, count source support, or join canonical records back to staging.
 
 ### `canonical/poi_field_evidence/poi_field_evidence.parquet`
 
-One row per available supported field value per source record, plus rows for
-generated cost and duration heuristics. Several evidence rows can exist for one POI
-and field.
+One row per available supported field value per source record, plus rows for generated cost and duration heuristics. Several evidence rows can exist for one POI and field.
 
-Evidence is currently emitted for names, category, address fields, contact fields,
-coordinates, hours, costs, duration, description, operating status,
-`outside_region`, and the staging-only `price_raw` value. It is not emitted for
-computed fields such as normalized matching keys, semantic tags, `source_count`,
-observation timestamps, or eligibility fields.
+Evidence is currently emitted for names, category, address fields, contact fields, coordinates, hours, costs, duration, description, operating status, `outside_region`, and the staging-only `price_raw` value. It is not emitted for computed fields such as normalized matching keys, semantic tags, `source_count`, observation timestamps, or eligibility fields.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -381,9 +349,7 @@ observation timestamps, or eligibility fields.
 | `selected` | bool | Whether field resolution selected this evidence |
 | `transformation_version` | string? | Parser or heuristic version |
 
-Use it to explain selected values, audit heuristic cost/duration, compare conflicting
-sources, and implement confidence filters. No current pipeline step creates
-`llm_generated` evidence.
+Use it to explain selected values, audit heuristic cost/duration, compare conflicting sources, and implement confidence filters. No current pipeline step creates `llm_generated` evidence.
 
 ### `canonical/identity_history/identity_history.parquet`
 
@@ -397,13 +363,11 @@ One row per canonical POI. This is an extension point for ID lifecycle tracking.
 | `redirect_to` | string? | Future merge redirect target; currently null |
 | `split_from` | string? | Future split parent; currently null |
 
-Do not treat it as a complete cross-release identity ledger yet. Merge, split, and
-redirect workflows are not implemented.
+Do not treat it as a complete cross-release identity ledger yet. Merge, split, and redirect workflows are not implemented.
 
 ## 6. Derived Datasets
 
-Both derived datasets use the complete `poi/v1` schema described under
-`canonical/pois`. They contain filtered copies, not new document or solver schemas.
+Both derived datasets use the complete `poi/v1` schema described under `canonical/pois`. They contain filtered copies, not new document or solver schemas.
 
 ### `derived/rag_pois/rag_pois.parquet`
 
@@ -414,13 +378,9 @@ Contains canonical POIs for which all of these are true:
 - `category` is non-blank.
 - `outside_region` is false.
 
-Use it as the input to a separate document-building, embedding, and indexing step.
-This repository does not create embeddings or a vector database. Keep `poi_id` as
-the document ID so retrieval results can join back to canonical and CSP data.
+Use it as the input to a separate document-building, embedding, and indexing step. This repository does not create embeddings or a vector database. Keep `poi_id` as the document ID so retrieval results can join back to canonical and CSP data.
 
-Suggested RAG document fields are `name`, `category`, `description`, `address`,
-`district`, `opening_hours_raw`, and cost fields. Do not expose normalized matching
-keys or raw provider blobs as user-facing text.
+Suggested RAG document fields are `name`, `category`, `description`, `address`, `district`, `opening_hours_raw`, and cost fields. Do not expose normalized matching keys or raw provider blobs as user-facing text.
 
 ### `derived/csp_pois/csp_pois.parquet`
 
@@ -432,22 +392,18 @@ Contains canonical POIs satisfying the RAG-style identity requirements plus:
 - At least one cost value is present with direct, parsed, heuristic, or manual evidence.
 - `outside_region` is false.
 
-Use it as candidate input to a separate itinerary solver. The table supplies POI
-duration, availability, cost, and coordinates, but it does not supply:
+Use it as candidate input to a separate itinerary solver. The table supplies POI duration, availability, cost, and coordinates, but it does not supply:
 
 - User time windows, budget, preferences, or start/end locations.
 - Travel times or distances between POIs.
 - Decision variables, constraints, or an optimization objective.
 - A routing engine or CSP/CP-SAT implementation.
 
-A typical application retrieves relevant POIs from `rag_pois`, intersects their
-IDs with `csp_pois`, requests a travel-time matrix, and then runs a solver.
+A typical application retrieves relevant POIs from `rag_pois`, intersects their IDs with `csp_pois`, requests a travel-time matrix, and then runs a solver.
 
 ## 7. Report Files and Schemas
 
-Every report directory contains equivalent `.parquet` and `.csv` data plus an
-artifact manifest. `entity_resolution` and `dedup_report` currently contain the
-same rows.
+Every report directory contains equivalent `.parquet` and `.csv` data plus an artifact manifest. `entity_resolution` and `dedup_report` currently contain the same rows.
 
 ### `reports/source_status/source_status.parquet`
 
@@ -456,8 +412,7 @@ same rows.
 | `source` | string | Selected source name |
 | `status` | string | `success`, `empty`, `not_configured`, `unsupported`, `deferred`, `blocked`, or `failed` |
 
-Use this first. A source without `success` or `empty` has no raw or staging artifact.
-The report includes selected sources only, not every entry in `sources.yaml`.
+Use this first. A source without `success` or `empty` has no raw or staging artifact. The report includes selected sources only, not every entry in `sources.yaml`.
 
 ### `reports/source_quality/source_quality.parquet`
 
@@ -481,12 +436,9 @@ One row per source that produced accepted staging records.
 | `outside_region_count` | int | Rows marked outside the polygon |
 | `duplicate_candidate_count` | int | Current per-source duplicate candidate count |
 
-Coverage values range from 0 to 1. Compare them to an earlier accepted run rather
-than assuming a universal threshold.
+Coverage values range from 0 to 1. Compare them to an earlier accepted run rather than assuming a universal threshold.
 
-Current limitation: `duplicate_candidate_count` is calculated on one source at a
-time, while candidate generation excludes same-source pairs. It is therefore
-expected to remain zero in the current implementation.
+Current limitation: `duplicate_candidate_count` is calculated on one source at a time, while candidate generation excludes same-source pairs. It is therefore expected to remain zero in the current implementation.
 
 ### `reports/category_distribution/category_distribution.parquet`
 
@@ -496,8 +448,7 @@ expected to remain zero in the current implementation.
 | `category` | string | Journie category or `<unmapped>` |
 | `count` | int | Staging rows in the source/category group |
 
-Use it to detect sudden category shifts, compare source specialization, and verify
-taxonomy mapping changes.
+Use it to detect sudden category shifts, compare source specialization, and verify taxonomy mapping changes.
 
 ### `reports/missing_values/missing_values.parquet`
 
@@ -508,11 +459,9 @@ taxonomy mapping changes.
 | `missing_count` | int | Rows where the value is null or empty |
 | `record_count` | int | Accepted staging rows for that source |
 
-Measured fields are `name`, `category`, `latitude`, `longitude`, `address`,
-`website`, `opening_hours_raw`, `price_raw`, and `description`.
+Measured fields are `name`, `category`, `latitude`, `longitude`, `address`, `website`, `opening_hours_raw`, `price_raw`, and `description`.
 
-Compute missing rate as `missing_count / record_count`. Do not divide when
-`record_count` is zero.
+Compute missing rate as `missing_count / record_count`. Do not divide when `record_count` is zero.
 
 ### `reports/unmapped_categories/unmapped_categories.parquet`
 
@@ -522,17 +471,13 @@ Compute missing rate as `missing_count / record_count`. Do not divide when
 | `source_category` | string | Unmapped provider label or `<missing>` |
 | `count` | int | Affected staging rows |
 
-Use it to prioritize additions to `configs/categories/mappings/*.v1.yaml`. Review
-high-count values first. Do not automatically map unknown values to `other`.
-Overture and OSM records filtered by domain selection never enter staging, so this
-report cannot discover unmapped categories excluded by those selectors.
+Use it to prioritize additions to `configs/categories/mappings/*.v1.yaml`. Review high-count values first. Do not automatically map unknown values to `other`. Overture and OSM records filtered by domain selection never enter staging, so this report cannot discover unmapped categories excluded by those selectors.
 
 ### `reports/entity_resolution/entity_resolution.parquet`
 
 ### `reports/dedup_report/dedup_report.parquet`
 
-Both files currently contain one row for each cross-source candidate pair generated
-because it is within 150 metres or shares a strong identifier.
+Both files currently contain one row for each cross-source candidate pair generated because it is within 150 metres or shares a strong identifier.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -546,16 +491,11 @@ because it is within 150 metres or shares a strong identifier.
 | `strong_match` | bool | Whether a normalized phone, website, or other strong ID matched |
 | `decision` | string | `merge`, `review`, or `separate` |
 
-Current thresholds are `merge >= 0.90` and `review >= 0.75`. A strong identifier
-can force score 1 unless coordinates contradict it by more than 1,000 metres.
+Current thresholds are `merge >= 0.90` and `review >= 0.75`. A strong identifier can force score 1 unless coordinates contradict it by more than 1,000 metres.
 
-`decision` is the pairwise scoring result, not proof that clustering applied the
-merge. Final clustering can reject a scored merge to avoid two records from the
-same source in one cluster or a cluster spanning more than 300 metres. The current
-reports do not record that final applied/rejected outcome.
+`decision` is the pairwise scoring result, not proof that clustering applied the merge. Final clustering can reject a scored merge to avoid two records from the same source in one cluster or a cluster spanning more than 300 metres. The current reports do not record that final applied/rejected outcome.
 
-Inspect all `review` rows, then inspect `merge` rows near 0.90. Chains and business
-branches deserve special attention; confirm final membership in `poi_sources`.
+Inspect all `review` rows, then inspect `merge` rows near 0.90. Chains and business branches deserve special attention; confirm final membership in `poi_sources`.
 
 ### `reports/opening_hours_parse_failures/opening_hours_parse_failures.parquet`
 
@@ -569,8 +509,7 @@ Each populated parser-failure report has:
 | `source_record_id` | string | Failed staging record ID |
 | `value_raw` | string | Input the parser could not normalize |
 
-A row appears only when a raw value exists but normalization failed. Group by
-`value_raw` before changing a parser; fix common patterns and add regression tests.
+A row appears only when a raw value exists but normalization failed. Group by `value_raw` before changing a parser; fix common patterns and add regression tests.
 
 ### `reports/csp_eligibility/csp_eligibility.parquet`
 
@@ -596,8 +535,7 @@ Explode `reasons` and count each code to identify the largest CSP bottleneck.
 
 ## 8. How to Review Reports
 
-Review one run in this order. Stop when an earlier stage is invalid; downstream
-percentages are not meaningful until source acquisition is understood.
+Review one run in this order. Stop when an earlier stage is invalid; downstream percentages are not meaningful until source acquisition is understood.
 
 ### Step 1: Check Source Status
 
@@ -608,9 +546,7 @@ status = pl.read_parquet(RUN_ROOT / "reports/source_status/source_status.parquet
 print(status)
 ```
 
-For a complete benchmark, investigate every status other than `success`. Decide
-explicitly whether `empty` is expected. If partial success is acceptable, record
-the missing sources with the benchmark result.
+For a complete benchmark, investigate every status other than `success`. Decide explicitly whether `empty` is expected. If partial success is acceptable, record the missing sources with the benchmark result.
 
 ### Step 2: Check Volume, Coverage, and Boundary Noise
 
@@ -628,8 +564,7 @@ print(
 )
 ```
 
-Compare `record_count` and coverage fields to the previous accepted snapshot.
-Large changes require a source, adapter, mapping, or boundary explanation.
+Compare `record_count` and coverage fields to the previous accepted snapshot. Large changes require a source, adapter, mapping, or boundary explanation.
 
 ### Step 3: Check Rejections and Mapping Gaps
 
@@ -666,8 +601,7 @@ print(needs_review)
 print(near_threshold)
 ```
 
-For parser reports, check `table.width` before selecting columns because a report
-with no failures is currently a zero-column table.
+For parser reports, check `table.width` before selecting columns because a report with no failures is currently a zero-column table.
 
 ### Step 5: Explain CSP Exclusions
 
@@ -698,9 +632,7 @@ excluded = (
 print(excluded)
 ```
 
-Fix source data, mappings, or parsers before relaxing CSP requirements. Unknown
-hours must not be interpreted as 24/7, and unknown prices must not be interpreted
-as zero.
+Fix source data, mappings, or parsers before relaxing CSP requirements. Unknown hours must not be interpreted as 24/7, and unknown prices must not be interpreted as zero.
 
 ## 9. Artifact Manifest
 
@@ -730,7 +662,4 @@ Every staging, canonical, derived, and report artifact has the same manifest mod
 | `license` | string? | Source license for staging |
 | `redistribution_allowed` | bool? | Source redistribution decision for staging |
 
-Check the manifest before consuming an artifact. At minimum, verify
-`schema_version`, `row_count`, `status`, `content_sha256`, and the expected parent
-IDs. For benchmark outputs, also preserve the full configuration and boundary
-because `config_sha256` does not currently cover every relevant file.
+Check the manifest before consuming an artifact. At minimum, verify `schema_version`, `row_count`, `status`, `content_sha256`, and the expected parent IDs. For benchmark outputs, also preserve the full configuration and boundary because `config_sha256` does not currently cover every relevant file.

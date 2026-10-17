@@ -1,0 +1,15 @@
+[
+  {
+    "name": "gemma",
+    "provider": "gemini",
+    "model": "gemma-4-26b-a4b-it",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "api_key_env": "GEMINI_API_KEY_2",
+    "temperature": 0.0,
+    "max_output_tokens": 4096,
+    "timeout_seconds": 120.0,
+    "pacing_seconds": 15.0,
+    "structured_output": true,
+    "notes": "Verify current free-tier availability and quota; adjust pacing accordingly."
+  }
+]

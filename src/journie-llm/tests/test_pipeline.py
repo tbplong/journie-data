@@ -125,8 +125,34 @@ def test_prompt_contract_without_gold_loading(monkeypatch: pytest.MonkeyPatch) -
     for illustration in ("Gallery Cedar", "Garden Willow", "60 CHF", "2027-04-18"):
         assert illustration in addition and illustration not in baseline
     assert reinforced.count("JSON Schema:\n") == 1
+    structured = prompts.build_prompt("structured")
+    assert structured.startswith(baseline)
+    assert structured.count("JSON Schema:\n") == 1
+    assert "FEW-SHOT EXAMPLES" in structured and "SELF-VERIFICATION" in structured
+    assert json.dumps(prompts.STRUCTURED_EXAMPLES, ensure_ascii=False, indent=2) in structured
     with pytest.raises(ValueError, match="Unknown prompt variant"):
         prompts.build_prompt(cast(prompts.PromptVariant, "unknown"))
+
+
+def test_prompt_snapshots_and_complete_examples() -> None:
+    archive = Path(__file__).resolve().parents[1] / "archive" / "prompts"
+    for variant, version in prompts.PROMPT_VERSIONS.items():
+        assert (archive / f"{version}.txt").read_bytes() == prompts.build_prompt(
+            cast(prompts.PromptVariant, variant)
+        ).encode("utf-8")
+    examples = [
+        Extraction.model_validate(example["output"]) for example in prompts.STRUCTURED_EXAMPLES
+    ]
+    for output in examples:
+        assert output.missing_fields == derive_missing_fields(output)
+        assert consistency_issues(output) == []
+    assert examples[0].end_date is None and examples[0].budget_scope == "total"
+    assert examples[0].hard_constraints[3].operator == "max"
+    assert examples[0].soft_constraints[0].operator == "prefer"
+    assert examples[1].budget_vnd is None and not examples[1].needs_clarification
+    assert examples[1].hard_constraints[1].value == "budget exactly 85 CHF"
+    assert examples[2].possible_conflicts == ["must_visit_avoid"]
+    assert examples[2].needs_clarification
 
 
 @pytest.mark.parametrize("provider", ["gemini", "openai"])
@@ -136,6 +162,7 @@ def test_execute_sends_selected_prompt_only_setting_changed(
     monkeypatch.setenv("PIPELINE_TEST_KEY", "offline-secret")
     cfg, case = config(provider), make_case()
     requests: list[httpx.Request] = []
+    variants: tuple[prompts.PromptVariant, ...] = ("baseline", "reinforced", "structured")
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -145,15 +172,13 @@ def test_execute_sends_selected_prompt_only_setting_changed(
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             adapter = GeminiProvider if provider == "gemini" else OpenAICompatibleProvider
             instance = adapter(client, cfg)
-            baseline = await benchmark.execute(instance, cfg, case, 1)
-            reinforced = await benchmark.execute(
-                instance, cfg, case, 1, prompt_variant="reinforced"
-            )
-            return [baseline, reinforced]
+            return [
+                await benchmark.execute(instance, cfg, case, 1, prompt_variant=variant)
+                for variant in variants
+            ]
 
     rows = asyncio.run(execute())
     bodies = [json.loads(request.content) for request in requests]
-    variants: tuple[prompts.PromptVariant, ...] = ("baseline", "reinforced")
     for body, variant in zip(bodies, variants, strict=True):
         if provider == "gemini":
             assert body.pop("systemInstruction") == {
@@ -174,21 +199,22 @@ def test_execute_sends_selected_prompt_only_setting_changed(
             assert body["response_format"]["json_schema"]["schema"] == (
                 Extraction.model_json_schema()
             )
-    assert bodies[0] == bodies[1]
-    assert requests[0].url == requests[1].url
+    assert bodies[0] == bodies[1] == bodies[2]
+    assert requests[0].url == requests[1].url == requests[2].url
     headers = [dict(request.headers) for request in requests]
     for header in headers:
         header.pop("content-length")
-    assert headers[0] == headers[1]
-    assert requests[0].extensions == requests[1].extensions
+    assert headers[0] == headers[1] == headers[2]
+    assert requests[0].extensions == requests[1].extensions == requests[2].extensions
     assert requests[0].extensions["timeout"]["read"] == 7
-    assert [row["prompt_variant"] for row in rows] == ["baseline", "reinforced"]
+    assert [row["prompt_variant"] for row in rows] == list(variants)
     assert [row["prompt_version"] for row in rows] == [
-        prompts.PROMPT_VERSIONS[variant] for variant in ("baseline", "reinforced")
+        prompts.PROMPT_VERSIONS[variant] for variant in variants
     ]
     assert (
         rows[0]["metrics"]
         == rows[1]["metrics"]
+        == rows[2]["metrics"]
         == score(case.expected_output, case.expected_output)
     )
 
@@ -354,9 +380,11 @@ def test_processed_summary_denominators_and_raw_summary_unchanged(
     assert empty["consistency_issue_counts"] == {}
 
 
-def test_full_reinforced_run_separate_artifacts(
+@pytest.mark.parametrize("variant", ["reinforced", "structured"])
+def test_full_prompt_run_separate_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    variant: prompts.PromptVariant,
 ) -> None:
     monkeypatch.setenv("PIPELINE_TEST_KEY", "offline-secret")
     cases = [make_case("good-a"), make_case("good-b"), make_case("invalid")]
@@ -365,7 +393,7 @@ def test_full_reinforced_run_separate_artifacts(
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        assert body["messages"][0]["content"] == prompts.build_prompt("reinforced")
+        assert body["messages"][0]["content"] == prompts.build_prompt(variant)
         case = by_input[body["messages"][1]["content"]]
         requests.append(case.id)
         output = case.expected_output.model_dump()
@@ -380,13 +408,13 @@ def test_full_reinforced_run_separate_artifacts(
         return client_class(transport=httpx.MockTransport(handler), **kwargs)
 
     monkeypatch.setattr(benchmark.httpx, "AsyncClient", client_factory)
-    output = tmp_path / "reinforced"
-    asyncio.run(benchmark.run([config()], cases, output, 2, 1, 42, "generated-hash", "reinforced"))
+    output = tmp_path / variant
+    asyncio.run(benchmark.run([config()], cases, output, 2, 1, 42, "generated-hash", variant))
     manifest = json.loads((output / "manifest.json").read_text())
-    prompt = prompts.build_prompt("reinforced")
+    prompt = prompts.build_prompt(variant)
     assert manifest["complete"] and manifest["measured_requests"] == 6
-    assert manifest["prompt_variant"] == "reinforced"
-    assert manifest["prompt_version"] == prompts.PROMPT_VERSIONS["reinforced"]
+    assert manifest["prompt_variant"] == variant
+    assert manifest["prompt_version"] == prompts.PROMPT_VERSIONS[variant]
     assert manifest["system_prompt"] == prompt
     assert manifest["prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
     assert manifest["schema"] == Extraction.model_json_schema()
@@ -398,7 +426,7 @@ def test_full_reinforced_run_separate_artifacts(
     assert len(rows) == 6 and len(warmups) == 1 and len(requests) == 7
     assert warmups[0]["warmup"] and warmups[0]["pass"] == 0
     for row in rows:
-        assert not row["warmup"] and row["prompt_variant"] == "reinforced"
+        assert not row["warmup"] and row["prompt_variant"] == variant
         assert row["metrics"]["complete_case_accuracy"] == 0
         valid = row["test_case_id"] != "invalid"
         assert row["schema_valid"] == row["missing_fields_changed"] == valid

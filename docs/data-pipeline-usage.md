@@ -7,12 +7,9 @@ Use this guide to:
 3. Run real data without confusing snapshots, boundaries, and releases.
 4. Find the correct extension point for a new source, parser, or schema.
 
-> **Current scope:** the pipeline ingests and normalizes POIs, resolves duplicate
-> entities, records field-level provenance, and builds RAG-base and CSP-base
-> datasets. It does not create LLM enrichment, embeddings, or vector indexes.
+> **Current scope:** the pipeline ingests and normalizes POIs, resolves duplicate entities, records field-level provenance, and builds RAG-base and CSP-base datasets. It does not create LLM enrichment, embeddings, or vector indexes.
 
-For a file-by-file schema and report reference, see
-[`dataset-reference.md`](dataset-reference.md).
+For a file-by-file schema and report reference, see [`dataset-reference.md`](dataset-reference.md).
 
 ## 1. Run It in Five Minutes
 
@@ -24,8 +21,7 @@ uv run journie-data config validate --region hcm
 uv run journie-data run --region hcm --snapshot fixture-v1 --run-id fixture-run-v1 --fixture --data-root data
 ```
 
-The last command reads all four files in `tests/fixtures/`. It does not access the
-network or create a release. Its main outputs are:
+The last command reads all four files in `tests/fixtures/`. It does not access the network or create a release. Its main outputs are:
 
 ```text
 data/artifacts/hcm/fixture-run-v1/
@@ -41,11 +37,9 @@ Inspect the canonical POIs:
 uv run python -c "import polars as pl; print(pl.read_parquet('data/artifacts/hcm/fixture-run-v1/canonical/pois/pois.parquet').select('poi_id', 'name', 'category', 'csp_eligible'))"
 ```
 
-Use `--resume` to continue the same run. If code, input, or configuration changed,
-use a new `run-id` instead.
+Use `--resume` to continue the same run. If code, input, or configuration changed, use a new `run-id` instead.
 
-Fixture data tests the processing flow only. Do not report fixture metrics as real
-Ho Chi Minh City coverage.
+Fixture data tests the processing flow only. Do not report fixture metrics as real Ho Chi Minh City coverage.
 
 ## 2. What the Pipeline Produces
 
@@ -62,13 +56,10 @@ external source or local file
 Core terms:
 
 - **POI (Point of Interest):** a place such as a museum, restaurant, or park.
-- **Entity resolution:** deciding whether records from different sources describe
-  the same POI, then selecting a representative value for each field.
-- **Field evidence:** provenance showing where a canonical value came from and
-  whether it was direct, parsed, manually supplied, or estimated by a heuristic.
+- **Entity resolution:** deciding whether records from different sources describe the same POI, then selecting a representative value for each field.
+- **Field evidence:** provenance showing where a canonical value came from and whether it was direct, parsed, manually supplied, or estimated by a heuristic.
 
-The pipeline does not invent missing values. Unknown opening hours do not mean
-24/7, and an unknown price does not mean free.
+The pipeline does not invent missing values. Unknown opening hours do not mean 24/7, and an unknown price does not mean free.
 
 ## 3. Bounding Box and Boundary Polygon
 
@@ -83,12 +74,10 @@ The current spatial flow is:
 
 1. Live OSM and Overture queries fetch candidates within the `bbox`.
 2. Normalization tests each `(longitude, latitude)` point against the polygon.
-3. Points outside the polygon remain in staging and canonical data with
-   `outside_region=true`.
+3. Points outside the polygon remain in staging and canonical data with `outside_region=true`.
 4. RAG-base and CSP-base exclude POIs carrying that flag.
 
-Local inputs are not pre-filtered by `bbox`. The polygon still marks their records
-when valid coordinates are available.
+Local inputs are not pre-filtered by `bbox`. The polygon still marks their records when valid coordinates are available.
 
 Boundary configuration lives in:
 
@@ -99,9 +88,7 @@ configs/geo/hcm.geojson   # GeoJSON geometry
 
 ### Current Boundary Status
 
-`configs/geo/hcm.geojson` is currently a rectangular polygon generated from the
-bbox (`bootstrap_bbox_v1`). It is useful for development but is not an
-administrative boundary suitable for a real release.
+`configs/geo/hcm.geojson` is currently a rectangular polygon generated from the bbox (`bootstrap_bbox_v1`). It is useful for development but is not an administrative boundary suitable for a real release.
 
 Before publishing real data:
 
@@ -110,25 +97,19 @@ Before publishing real data:
 3. Keep GeoJSON coordinates in WGS84 `[longitude, latitude]` order.
 4. Visually inspect concave areas, islands, and polygon holes.
 
-`config validate` currently checks that the file exists and has an accepted
-top-level GeoJSON type. It does not validate non-empty geometry, topology, or
-administrative accuracy.
+`config validate` currently checks that the file exists and has an accepted top-level GeoJSON type. It does not validate non-empty geometry, topology, or administrative accuracy.
 
 ## 4. IDs and Versions
 
 ### `run-id`
 
-A run ID identifies one transformation run and its directory under
-`data/artifacts/<region>/<run-id>/`. If omitted, the CLI creates a UTC ID in
-`YYYYMMDDTHHMMSSZ` format.
+A run ID identifies one transformation run and its directory under `data/artifacts/<region>/<run-id>/`. If omitted, the CLI creates a UTC ID in `YYYYMMDDTHHMMSSZ` format.
 
-Use a new run ID after changing code, parsers, schemas, taxonomy, mappings,
-resolution logic, or configuration.
+Use a new run ID after changing code, parsers, schemas, taxonomy, mappings, resolution logic, or configuration.
 
 ### `snapshot`
 
-The current `run` command passes one shared `--snapshot` string to every selected
-source. Its actual meaning depends on the adapter:
+The current `run` command passes one shared `--snapshot` string to every selected source. Its actual meaning depends on the adapter:
 
 | Source | Does `--snapshot` select the input? |
 |---|---|
@@ -136,24 +117,17 @@ source. Its actual meaning depends on the adapter:
 | Live OSM | No. Overpass returns current data; the string is stored only as the snapshot ID. |
 | Foursquare, Visit HCMC, or local files | No. The configured file or URL selects the input; the string is an output label. |
 
-Therefore, `--snapshot 2026-09-13` does not create a synchronized multi-source
-snapshot for that date. For benchmarks and releases, record each source's release
-or file checksum and each live query's retrieval time separately.
+Therefore, `--snapshot 2026-09-13` does not create a synchronized multi-source snapshot for that date. For benchmarks and releases, record each source's release or file checksum and each live query's retrieval time separately.
 
-Do not reuse a snapshot ID for mutable live data. The pipeline fetches first and
-then rejects content that conflicts with an existing raw snapshot under that ID.
+Do not reuse a snapshot ID for mutable live data. The pipeline fetches first and then rejects content that conflicts with an existing raw snapshot under that ID.
 
 ### `dataset-version`
 
-`--dataset-version` creates
-`data/releases/journie-<region>-v<version>/`. Dataset versions are independent of
-schema, taxonomy, adapter, and resolver versions. Assign one only after reviewing
-quality reports and redistribution rights.
+`--dataset-version` creates `data/releases/journie-<region>-v<version>/`. Dataset versions are independent of schema, taxonomy, adapter, and resolver versions. Assign one only after reviewing quality reports and redistribution rights.
 
 ### `artifact-id`
 
-An artifact ID is derived from the stage, table name, schema label, and Parquet
-checksum. Its upstream relationships are stored in `parent_artifact_ids`.
+An artifact ID is derived from the stage, table name, schema label, and Parquet checksum. Its upstream relationships are stored in `parent_artifact_ids`.
 
 ## 5. Choose a Run Mode
 
@@ -168,8 +142,7 @@ uv run journie-data run \
   --data-root data
 ```
 
-Add `--dataset-version 0.0.0-fixture.2` to test release packaging. The release will
-have `release_kind: fixture`.
+Add `--dataset-version 0.0.0-fixture.2` to test release packaging. The release will have `release_kind: fixture`.
 
 ### Enabled Sources
 
@@ -178,20 +151,15 @@ uv run journie-data source check --region hcm
 uv run journie-data run --region hcm --snapshot <shared-label> --run-id <new-run-id> --data-root data
 ```
 
-`run` selects only sources with `enabled: true` in `configs/sources.yaml`. The
-defaults are Overture and OSM. The default configuration cannot publish a real
-release because Overture redistribution is unverified and the boundary is still a
-bootstrap polygon.
+`run` selects only sources with `enabled: true` in `configs/sources.yaml`. The defaults are Overture and OSM. The default configuration cannot publish a real release because Overture redistribution is unverified and the boundary is still a bootstrap polygon.
 
-Partial success is allowed by default. Require every selected source to fetch
-successfully or return a valid empty result with:
+Partial success is allowed by default. Require every selected source to fetch successfully or return a valid empty result with:
 
 ```bash
 uv run journie-data run --region hcm --snapshot <shared-label> --run-id <new-run-id> --require-all-sources
 ```
 
-This gate checks fetch status, not whether records survive normalization. The
-command still exits with code 2 if all sources produce no staging records.
+This gate checks fetch status, not whether records survive normalization. The command still exits with code 2 if all sources produce no staging records.
 
 ### One Source
 
@@ -204,10 +172,7 @@ uv run journie-data crawl visithcmc --region hcm --snapshot <label> --run-id <ru
 
 Supported local formats are `.json`, `.jsonl`, `.ndjson`, `.parquet`, and `.pq`.
 
-Single-source commands create raw and staging outputs only. Use `journie-data run`
-to create canonical, derived, and report artifacts. Because `run` has no per-source
-`--input` option, set each source's `local_path` in `configs/sources.yaml` for a
-multi-source local build.
+Single-source commands create raw and staging outputs only. Use `journie-data run` to create canonical, derived, and report artifacts. Because `run` has no per-source `--input` option, set each source's `local_path` in `configs/sources.yaml` for a multi-source local build.
 
 ### Adapter Capabilities
 
@@ -233,10 +198,7 @@ Use resume only to continue the same interrupted run:
 | Changed parser, mapping, taxonomy, schema, or config | Use a new run ID |
 | Comparing two transformations of the same raw data | Use two different run IDs |
 
-Resume currently reuses an artifact when its Parquet file and manifest exist. It
-does not compare the requested snapshot, current config hash, schema, or parent
-artifacts. If staging is missing but a matching raw file and manifest exist, resume
-validates the raw checksum and rebuilds staging without fetching the source.
+Resume currently reuses an artifact when its Parquet file and manifest exist. It does not compare the requested snapshot, current config hash, schema, or parent artifacts. If staging is missing but a matching raw file and manifest exist, resume validates the raw checksum and rebuilds staging without fetching the source.
 
 ## 7. Output Layout
 
@@ -258,31 +220,21 @@ data/
     `-- manifest.json
 ```
 
-Do not edit `data/raw/` or `data/releases/` directly. Raw snapshots and releases
-are immutable; new input requires a new snapshot ID or dataset version.
+Do not edit `data/raw/` or `data/releases/` directly. Raw snapshots and releases are immutable; new input requires a new snapshot ID or dataset version.
 
 ### Raw
 
-`records.jsonl` contains records acquired by the adapter. It can be inspected or
-passed back to an adapter through `--input`, but it is not always the byte-for-byte
-source response. OSM stores only `elements`; remote Overture removes geometry and
-adds coordinates calculated from each feature bbox.
+`records.jsonl` contains records acquired by the adapter. It can be inspected or passed back to an adapter through `--input`, but it is not always the byte-for-byte source response. OSM stores only `elements`; remote Overture removes geometry and adds coordinates calculated from each feature bbox.
 
-The raw manifest records its checksum, record count, adapter version, retrieval
-time, license, and redistribution status at run time.
+The raw manifest records its checksum, record count, adapter version, retrieval time, license, and redistribution status at run time.
 
 ### Staging
 
-Each source gets a `staging/v1` table with source identity, names, coordinates,
-categories, contact details, hours, prices, and retained source fields in
-`raw_tags` or `raw_data`.
+Each source gets a `staging/v1` table with source identity, names, coordinates, categories, contact details, hours, prices, and retained source fields in `raw_tags` or `raw_data`.
 
-Overture and OSM apply their configured category mappings as a domain-selection
-step before normalization. Their raw snapshots retain all acquired records, while
-staging contains only records matching at least one mapped travel category.
+Overture and OSM apply their configured category mappings as a domain-selection step before normalization. Their raw snapshots retain all acquired records, while staging contains only records matching at least one mapped travel category.
 
-Records rejected by a source filter or schema validation are written to
-`staging/<source>/rejected_records.jsonl` and do not enter canonical data.
+Records rejected by a source filter or schema validation are written to `staging/<source>/rejected_records.jsonl` and do not enter canonical data.
 
 ### Canonical
 
@@ -293,26 +245,18 @@ Records rejected by a source filter or schema validation are written to
 | `poi_field_evidence` | Where did each field value come from? |
 | `identity_history` | What is the canonical ID status in this run? |
 
-`pois.poi_id` remains stable while its source-record cluster remains unchanged.
-Changing clustering logic can change the ID. `identity_history` currently creates
-only `active` rows; cross-release merge, split, and redirect workflows are not yet
-fully implemented.
+`pois.poi_id` remains stable while its source-record cluster remains unchanged. Changing clustering logic can change the ID. `identity_history` currently creates only `active` rows; cross-release merge, split, and redirect workflows are not yet fully implemented.
 
 ### Derived
 
-- `rag_pois` requires a name, valid coordinates, a Journie category, and an
-  in-region result.
-- `csp_pois` additionally requires a positive visit duration, parsed opening hours,
-  and cost data with provenance.
+- `rag_pois` requires a name, valid coordinates, a Journie category, and an in-region result.
+- `csp_pois` additionally requires a positive visit duration, parsed opening hours, and cost data with provenance.
 
-These are canonical subsets, not a complete vector index or solver output.
-Eligibility rules are currently implemented directly in code;
-`configs/eligibility.v1.yaml` is loaded but does not control them yet.
+These are canonical subsets, not a complete vector index or solver output. Eligibility rules are currently implemented directly in code; `configs/eligibility.v1.yaml` is loaded but does not control them yet.
 
 ### Reports
 
-Use `reports/<name>/<name>.csv` for manual review and Parquet for code. Review in
-this order:
+Use `reports/<name>/<name>.csv` for manual review and Parquet for code. Review in this order:
 
 1. `source_status`: determine which sources actually succeeded or failed.
 2. `source_quality` and `missing_values`: check row counts and field coverage.
@@ -320,8 +264,7 @@ this order:
 4. `entity_resolution`: inspect likely false merges and false splits.
 5. Parser-failure and `csp_eligibility` reports: explain CSP exclusions.
 
-`source_status` includes only sources selected for the run. A `failed`, `blocked`,
-`deferred`, or `not_configured` source has no raw or staging artifact.
+`source_status` includes only sources selected for the run. A `failed`, `blocked`, `deferred`, or `not_configured` source has no raw or staging artifact.
 
 ## 8. Source Statuses
 
@@ -335,8 +278,7 @@ this order:
 | `blocked` | Robots rules or another policy prevented access |
 | `failed` | An HTTP, file, response-parsing, or runtime error occurred |
 
-Do not interpret zero rows as “the source has no POIs” until you inspect its status
-and rejected records.
+Do not interpret zero rows as “the source has no POIs” until you inspect its status and rejected records.
 
 ## 9. Create a Release
 
@@ -356,9 +298,7 @@ For a real run, the CLI automatically blocks only these conditions:
 1. `boundary_source` starts with `bootstrap`.
 2. A staging artifact does not have `redistribution_allowed: true`.
 
-You must still verify polygon accuracy, source completeness, quality reports,
-current licenses, the Git commit, and version uniqueness. Omitting
-`--require-all-sources` can still create a partial release.
+You must still verify polygon accuracy, source completeness, quality reports, current licenses, the Git commit, and version uniqueness. Omitting `--require-all-sources` can still create a partial release.
 
 Package an existing run with:
 
@@ -366,9 +306,7 @@ Package an existing run with:
 uv run journie-data release create --version <version> --run-id <run-id> --region hcm
 ```
 
-This standalone command does **not** run the boundary or license gates. Use it only
-after manual review. A release flattens files by stage; per-artifact manifests are
-embedded in the release-level `manifest.json` instead of copied as separate files.
+This standalone command does **not** run the boundary or license gates. Use it only after manual review. A release flattens files by stage; per-artifact manifests are embedded in the release-level `manifest.json` instead of copied as separate files.
 
 ## 10. Manifests and Reproducibility
 
@@ -387,32 +325,25 @@ Each run artifact has a `manifest.json` containing:
 
 Important reproducibility limits:
 
-- `config_sha256` covers sources, field priorities, duration, cost, and eligibility.
-  It does not cover region YAML, polygon bytes, taxonomy, or category mappings.
-- `schema list` registers only `staging/v1`, `poi/v1`, `poi-source/v1`, and
-  `field-evidence/v1`. Some report and identity tables have only manifest labels.
+- `config_sha256` covers sources, field priorities, duration, cost, and eligibility. It does not cover region YAML, polygon bytes, taxonomy, or category mappings.
+- `schema list` registers only `staging/v1`, `poi/v1`, `poi-source/v1`, and `field-evidence/v1`. Some report and identity tables have only manifest labels.
 - Live OSM is not historical, and raw records are not always original responses.
 
-For a benchmark, preserve the release manifest, Git commit, complete configuration,
-boundary polygon, and source input metadata or checksums.
+For a benchmark, preserve the release manifest, Git commit, complete configuration, boundary polygon, and source input metadata or checksums.
 
 ## 11. Maintain and Extend the Pipeline
 
 ### Add a Source
 
 1. Implement `SourceAdapter` under `src/journie_data/sources/`.
-2. Declare access and license metadata in `configs/sources.yaml`, then register the
-   adapter in the CLI.
+2. Declare access and license metadata in `configs/sources.yaml`, then register the adapter in the CLI.
 3. Add a versioned category mapping under `configs/categories/mappings/`.
-4. Map records to `StagingRecord`; retain unmapped source fields in `raw_data` or
-   `raw_tags`.
+4. Map records to `StagingRecord`; retain unmapped source fields in `raw_data` or `raw_tags`.
 5. Add a fixture and contract tests, then run the end-to-end pipeline with a new ID.
 
 ### Change a Parser, Taxonomy, or Resolver
 
-Do not modify the raw snapshot. Increase the relevant version when semantics
-change, process the old raw input under a new run ID, and compare reports between
-the two runs.
+Do not modify the raw snapshot. Increase the relevant version when semantics change, process the old raw input under a new run ID, and compare reports between the two runs.
 
 ### Add a Schema Version
 
@@ -441,5 +372,4 @@ uv run pytest
 uv run journie-data run --region hcm --snapshot fixture-check-v1 --run-id fixture-check-v1 --fixture --data-root data
 ```
 
-Change the final command's IDs if they already exist. Use `--resume` only when
-continuing that exact verification run.
+Change the final command's IDs if they already exist. Use `--resume` only when continuing that exact verification run.

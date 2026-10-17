@@ -1,9 +1,6 @@
 # Journie Data
 
-Versioned POI ingestion pipeline for Ho Chi Minh City. The current implementation covers
-Milestones 0-4: source ingestion, normalization, entity resolution, field provenance,
-Visit HCMC enrichment contracts, and CSP/RAG-base datasets. Semantic LLM enrichment and
-vector indexing are intentionally deferred.
+Versioned POI ingestion pipeline for Ho Chi Minh City. The current implementation covers Milestones 0-4: source ingestion, normalization, entity resolution, field provenance, Visit HCMC enrichment contracts, and CSP/RAG-base datasets. Semantic LLM enrichment and vector indexing are intentionally deferred.
 
 ## Setup
 
@@ -25,8 +22,7 @@ uv run journie-data run \
   --data-root data
 ```
 
-The fixture mode exercises all four adapters without network access. Fixture metrics must
-not be represented as real HCMC coverage.
+The fixture mode exercises all four adapters without network access. Fixture metrics must not be represented as real HCMC coverage.
 
 ## Live and Snapshot Inputs
 
@@ -37,21 +33,13 @@ uv run journie-data fetch foursquare --region hcm --snapshot <release> --input <
 uv run journie-data crawl visithcmc --region hcm --snapshot <date>
 ```
 
-Overture and Foursquare currently consume pinned local JSON/JSONL/Parquet snapshots. OSM
-supports Overpass or local snapshots. Visit HCMC supports robots-aware HTTP fetching and
-local parser fixtures. External access failures are recorded explicitly and never emitted
-as successful empty datasets.
+Overture and Foursquare currently consume pinned local JSON/JSONL/Parquet snapshots. OSM supports Overpass or local snapshots. Visit HCMC supports robots-aware HTTP fetching and local parser fixtures. External access failures are recorded explicitly and never emitted as successful empty datasets.
 
-Before publishing a real release, replace the bootstrap HCMC bounding polygon with a pinned
-authoritative administrative boundary and confirm every source's current license and
-redistribution terms.
+Before publishing a real release, replace the bootstrap HCMC bounding polygon with a pinned authoritative administrative boundary and confirm every source's current license and redistribution terms.
 
 ## Versioning
 
-Raw snapshots and release directories are immutable. Dataset, schema, taxonomy, resolver,
-eligibility, parser, and source adapter versions are independent. Additive or breaking
-schema changes must be registered explicitly in `journie_data.schemas.registry`; existing
-release files are never rewritten.
+Raw snapshots and release directories are immutable. Dataset, schema, taxonomy, resolver, eligibility, parser, and source adapter versions are independent. Additive or breaking schema changes must be registered explicitly in `journie_data.schemas.registry`; existing release files are never rewritten.
 
 ## Verification
 
