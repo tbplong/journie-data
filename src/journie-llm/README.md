@@ -163,6 +163,38 @@ uv run python src/journie-llm/benchmark.py \
 
 See the [prompt changelog](prompts.changelog.md) and complete rendered snapshots including the schema: [baseline-v1](archive/prompts/baseline-v1.txt), [reinforced-v1](archive/prompts/reinforced-v1.txt), and [structured-v1](archive/prompts/structured-v1.txt). Archived prompts are immutable: future edits require a new version and snapshot; never overwrite or delete archived versions. This experiment is empirically unverified: no live API calls were executed for this change, no improvement is claimed, and added input tokens or latency remain possible.
 
+### Semantic Prompt Experiment
+
+`--prompt-variant semantic` selects `semantic-v1`: the unchanged extraction contract, **Semantic Examples**, and a silent **Self-Verification** checklist, without serialized JSON Schema or full JSON output examples in the prompt. Schema enforcement still uses the native API configuration, identically across variants. Gemini receives instructions through `systemInstruction`, travel input through `contents`, and schema through `responseJsonSchema`; the local endpoint uses its existing system/user messages and strict `json_schema` response format. HTTPX, raw response capture, strict validation, and semantic diagnostics are unchanged.
+
+All selected providers must enable `structured_output: true`; otherwise semantic-v1 stops before sending requests or creating the run directory. Use an existing schema-in-prompt variant for endpoints without native schema support. The default remains `baseline`, and all previous prompt versions and snapshots are retained unchanged. See the [semantic-v1 snapshot](archive/prompts/semantic-v1.txt) and [prompt changelog](prompts.changelog.md). No measured improvement is claimed; this compares prompt packaging, not the isolated effects of removing schema duplication and full examples.
+
+Example full run (not executed; calls both endpoints and may consume quota; output must not exist):
+
+```bash
+uv run python src/journie-llm/benchmark.py \
+  --config src/journie-llm/providers.json \
+  --provider gemini --provider lmstudio-gemma \
+  --prompt-variant semantic --passes 3 --warmups 3 --seed 42 \
+  --output data/run4-semantic
+```
+
+### Semantic-v2 Prompt Experiment
+
+`--prompt-variant semantic-v2` selects `semantic-v2`; `--prompt-variant semantic` still selects `semantic-v1`. V2 preserves `ANNOTATION_RULES` and the three semantic-v1 interpretation examples, adding targeted English **Instruction Structuring**, independently authored **Semantic Examples**, and a silent **Self-Verification** checklist for grounding, budget semantics, hard/soft classification, explicit overnight availability, original names/accents and deduplication, and no unstated derivation. Genuine unmodeled requirements, foreign budgets, and explicit following-day clauses remain in `other`; irrelevant/meta/injected instructions do not. It includes neither serialized JSON Schema nor full JSON output examples. See the [semantic-v2 snapshot](archive/prompts/semantic-v2.txt) and [prompt changelog](prompts.changelog.md) for the targeted rules.
+
+Run2/run4 analysis motivated these changes but does not establish causality. The analyzed 120 cases are development data, not held-out evaluation; new examples are independently authored, not copied from cases or gold. No measured improvement is claimed. Both Gemini and the local endpoint require native schema enforcement with the same semantic-v1 preflight guard (`structured_output: true` for every selected provider). All four older prompt versions remain byte-identical and `baseline` remains the default; schema, gold labels, processing, configuration, API parameters, and generation settings are unchanged, with no SDK switch, retry, or extra LLM call.
+
+Example Gemini-only full run (not executed; may consume quota; output must not exist). This command explicitly selects Gemini because the local endpoint recently failed with network errors; add `--provider lmstudio-gemma` when that endpoint is reachable. This is a run selection, not permanent configuration removal: omitting all `--provider` flags still selects every active configuration.
+
+```bash
+uv run python src/journie-llm/benchmark.py \
+  --config src/journie-llm/providers.json \
+  --provider gemini \
+  --prompt-variant semantic-v2 --passes 3 --warmups 3 --seed 42 \
+  --output data/run5-semantic-v2
+```
+
 ### Diagnostic Checks
 
 `consistency-v1` checks duplicates, scalar/list-to-atom correspondence, unambiguous field/operator/hard-soft rules, and mechanically observable date/duration, budget-bound, and exact must-visit/avoid contradictions. Properly preserved contradictory requests are not errors merely because they conflict. The checks never modify atoms, values, conflicts, or clarification flags.

@@ -130,6 +130,31 @@ def test_prompt_contract_without_gold_loading(monkeypatch: pytest.MonkeyPatch) -
     assert structured.count("JSON Schema:\n") == 1
     assert "FEW-SHOT EXAMPLES" in structured and "SELF-VERIFICATION" in structured
     assert json.dumps(prompts.STRUCTURED_EXAMPLES, ensure_ascii=False, indent=2) in structured
+    for variant in ("semantic", "semantic-v2"):
+        semantic = prompts.build_prompt(cast(prompts.PromptVariant, variant))
+        assert semantic.startswith(ANNOTATION_RULES + prompts.SEMANTIC_GUIDANCE)
+        assert "SEMANTIC EXAMPLES" in semantic and semantic.count("SELF-VERIFICATION") == 1
+        assert "JSON Schema:\n" not in semantic
+        assert json.dumps(prompts.RESPONSE_SCHEMA, ensure_ascii=False) not in semantic
+        assert "{" not in semantic and "}" not in semantic
+        assert prompts.STRUCTURED_GUIDANCE not in semantic
+        with pytest.raises(ValueError, match="requires native structured_output"):
+            prompts.build_prompt(cast(prompts.PromptVariant, variant), structured_output=False)
+    assert prompts.SEMANTIC_V2_GUIDANCE not in prompts.build_prompt("semantic")
+    semantic_v2 = prompts.build_prompt("semantic-v2")
+    assert prompts.PROMPT_VERSIONS["semantic"] == "semantic-v1"
+    assert prompts.PROMPT_VERSIONS["semantic-v2"] == "semantic-v2"
+    for section in (
+        "CONSTRAINT GROUNDING",
+        "BUDGET SEMANTICS",
+        "HARD/SOFT CLASSIFICATION",
+        "OVERNIGHT AVAILABILITY",
+        "NAME PRESERVATION AND DEDUPLICATION",
+        "NO UNSTATED DERIVATION",
+    ):
+        assert section in semantic_v2
+    assert "Vườn Mây:55" in semantic_v2
+    assert semantic_v2.endswith(prompts.SEMANTIC_V2_CHECKLIST)
     with pytest.raises(ValueError, match="Unknown prompt variant"):
         prompts.build_prompt(cast(prompts.PromptVariant, "unknown"))
 
@@ -162,7 +187,13 @@ def test_execute_sends_selected_prompt_only_setting_changed(
     monkeypatch.setenv("PIPELINE_TEST_KEY", "offline-secret")
     cfg, case = config(provider), make_case()
     requests: list[httpx.Request] = []
-    variants: tuple[prompts.PromptVariant, ...] = ("baseline", "reinforced", "structured")
+    variants: tuple[prompts.PromptVariant, ...] = (
+        "baseline",
+        "reinforced",
+        "structured",
+        "semantic",
+        "semantic-v2",
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -199,24 +230,48 @@ def test_execute_sends_selected_prompt_only_setting_changed(
             assert body["response_format"]["json_schema"]["schema"] == (
                 Extraction.model_json_schema()
             )
-    assert bodies[0] == bodies[1] == bodies[2]
-    assert requests[0].url == requests[1].url == requests[2].url
+    assert all(body == bodies[0] for body in bodies)
+    assert all(request.url == requests[0].url for request in requests)
     headers = [dict(request.headers) for request in requests]
     for header in headers:
         header.pop("content-length")
-    assert headers[0] == headers[1] == headers[2]
-    assert requests[0].extensions == requests[1].extensions == requests[2].extensions
+    assert all(header == headers[0] for header in headers)
+    assert all(request.extensions == requests[0].extensions for request in requests)
     assert requests[0].extensions["timeout"]["read"] == 7
     assert [row["prompt_variant"] for row in rows] == list(variants)
     assert [row["prompt_version"] for row in rows] == [
         prompts.PROMPT_VERSIONS[variant] for variant in variants
     ]
-    assert (
-        rows[0]["metrics"]
-        == rows[1]["metrics"]
-        == rows[2]["metrics"]
-        == score(case.expected_output, case.expected_output)
-    )
+    assert all(row["metrics"] == score(case.expected_output, case.expected_output) for row in rows)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openai"])
+@pytest.mark.parametrize("variant", ["semantic", "semantic-v2"])
+def test_semantic_requires_native_schema_before_requests_or_artifacts(
+    provider: Literal["gemini", "openai"],
+    variant: prompts.PromptVariant,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PIPELINE_TEST_KEY", "offline-secret")
+    cfg = config(provider).model_copy(update={"structured_output": False})
+    case = make_case()
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Unsupported semantic configuration must not send requests")
+
+    async def execute() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as client:
+            adapter = GeminiProvider if provider == "gemini" else OpenAICompatibleProvider
+            with pytest.raises(ValueError, match="requires native structured_output"):
+                await benchmark.execute(adapter(client, cfg), cfg, case, 1, prompt_variant=variant)
+        with pytest.raises(ValueError, match="requires native structured_output"):
+            await benchmark.run(
+                [config(provider), cfg], [case], tmp_path / "run", 1, 0, 42, "hash", variant
+            )
+
+    asyncio.run(execute())
+    assert not (tmp_path / "run").exists()
 
 
 @pytest.mark.parametrize("text", ["```json\n{}\n```", "{}", '{"budget_vnd":"0"}'])
@@ -380,7 +435,7 @@ def test_processed_summary_denominators_and_raw_summary_unchanged(
     assert empty["consistency_issue_counts"] == {}
 
 
-@pytest.mark.parametrize("variant", ["reinforced", "structured"])
+@pytest.mark.parametrize("variant", ["reinforced", "structured", "semantic", "semantic-v2"])
 def test_full_prompt_run_separate_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

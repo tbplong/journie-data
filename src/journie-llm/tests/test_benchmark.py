@@ -3,7 +3,9 @@
 import asyncio
 import csv
 import json
+import os
 import random
+import sys
 from pathlib import Path
 
 import benchmark
@@ -20,6 +22,21 @@ def cases():
         case.id: case
         for case in benchmark.load_cases(Path(__file__).resolve().parents[1] / "cases.jsonl")
     }
+
+
+def test_cli_loads_repo_env_without_overriding_terminal(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        "JOURNIE_ENV_TEST=file-value\nJOURNIE_ENV_EXISTING=file-value\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(benchmark, "HERE", tmp_path / "src" / "journie-llm")
+    monkeypatch.delenv("JOURNIE_ENV_TEST", raising=False)
+    monkeypatch.setenv("JOURNIE_ENV_EXISTING", "terminal-value")
+    monkeypatch.setattr(sys, "argv", ["benchmark.py", "--help"])
+    with pytest.raises(SystemExit) as exc:
+        benchmark.main()
+    assert exc.value.code == 0
+    assert os.environ["JOURNIE_ENV_TEST"] == "file-value"
+    assert os.environ["JOURNIE_ENV_EXISTING"] == "terminal-value"
 
 
 def config(provider="openai", **overrides):

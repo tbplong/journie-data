@@ -1,5 +1,6 @@
 """Source-independent missing-field derivation and read-only consistency checks."""
 
+from collections.abc import Callable, Iterable
 from datetime import date
 
 from schema import Extraction, canonical
@@ -7,21 +8,37 @@ from schema import Extraction, canonical
 PROCESSING_VERSION = "missing-fields-v1"
 DIAGNOSTICS_VERSION = "consistency-v1"
 
+MISSING_FIELD_RULES: dict[str, tuple[tuple[str, ...], Callable[[Iterable[bool]], bool]]] = {
+    "destination": (("destination",), all),
+    "travel_dates_or_duration": (("start_date", "end_date", "duration_days"), all),
+    "budget": (("budget_vnd",), all),
+    "available_time": (("available_start", "available_end"), any),
+}
+
+LIST_ATOM_RULES = {
+    "interests": ("soft_constraints", "prefer"),
+    "preferred_places": ("soft_constraints", "prefer"),
+    "must_visit": ("hard_constraints", "include"),
+    "avoid": ("hard_constraints", "exclude"),
+}
+
+SCALAR_ATOM_OPERATORS = {
+    "destination": ("eq",),
+    "start_date": ("eq",),
+    "end_date": ("eq",),
+    "duration_days": ("eq",),
+    "budget_vnd": ("eq", "max"),
+    "available_start": ("eq",),
+    "available_end": ("eq",),
+}
+
 
 def derive_missing_fields(extraction: Extraction) -> list[str]:
-    missing = []
-    if extraction.destination is None:
-        missing.append("destination")
-    if all(
-        value is None
-        for value in (extraction.start_date, extraction.end_date, extraction.duration_days)
-    ):
-        missing.append("travel_dates_or_duration")
-    if extraction.budget_vnd is None:
-        missing.append("budget")
-    if extraction.available_start is None or extraction.available_end is None:
-        missing.append("available_time")
-    return missing
+    return [
+        label
+        for label, (fields, is_missing) in MISSING_FIELD_RULES.items()
+        if is_missing(getattr(extraction, field) is None for field in fields)
+    ]
 
 
 def process_extraction(extraction: Extraction) -> Extraction:
@@ -37,12 +54,6 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
     def report(code: str, field: str, detail: str, severity: str = "error") -> None:
         issues.append({"code": code, "field": field, "severity": severity, "detail": detail})
 
-    lists = {
-        "interests": ("soft_constraints", "prefer"),
-        "preferred_places": ("soft_constraints", "prefer"),
-        "must_visit": ("hard_constraints", "include"),
-        "avoid": ("hard_constraints", "exclude"),
-    }
     seen: set[str] = set()
     for kind in ("hard_constraints", "soft_constraints"):
         for atom in getattr(extraction, kind):
@@ -51,8 +62,8 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
                 report("duplicate_atom", atom.field, "Duplicate atom across constraint lists.")
             seen.add(key)
             valid = True
-            if atom.field in lists:
-                expected_kind, operator = lists[atom.field]
+            if atom.field in LIST_ATOM_RULES:
+                expected_kind, operator = LIST_ATOM_RULES[atom.field]
                 valid = kind == expected_kind and atom.operator == operator
             elif kind == "soft_constraints":
                 valid = atom.operator == "prefer"
@@ -69,19 +80,10 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
                     f"Unexpected {kind} operator {atom.operator!r} for this field.",
                 )
 
-    for field in (
-        "destination",
-        "start_date",
-        "end_date",
-        "duration_days",
-        "budget_vnd",
-        "available_start",
-        "available_end",
-    ):
+    for field, operators in SCALAR_ATOM_OPERATORS.items():
         value = getattr(extraction, field)
         if value is None:
             continue
-        operators = ("eq", "max") if field == "budget_vnd" else ("eq",)
         values = {
             atom.value
             for atom in extraction.hard_constraints
@@ -92,7 +94,7 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
         elif str(value) not in values:
             report("scalar_atom_mismatch", field, "Scalar differs from corresponding atom values.")
 
-    for field, (kind, operator) in lists.items():
+    for field, (kind, operator) in LIST_ATOM_RULES.items():
         values = set(getattr(extraction, field))
         atom_values = {
             atom.value

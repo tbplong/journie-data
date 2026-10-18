@@ -28,8 +28,6 @@ from providers import GeminiProvider, LLMProvider, OpenAICompatibleProvider, Pro
 from pydantic import ValidationError, model_validator
 from schema import Extraction, StrictModel, canonical, score
 
-load_dotenv()
-
 HERE = Path(__file__).resolve().parent
 SYSTEM_PROMPT = build_prompt()
 
@@ -82,7 +80,7 @@ async def execute(
     warmup: bool = False,
     prompt_variant: PromptVariant = "baseline",
 ) -> dict:
-    system_prompt = build_prompt(prompt_variant)
+    system_prompt = build_prompt(prompt_variant, structured_output=config.structured_output)
     row: dict[str, Any] = {
         "provider": config.name,
         "model": config.model,
@@ -321,7 +319,9 @@ async def run(
     cases_hash: str,
     prompt_variant: PromptVariant = "baseline",
 ) -> None:
-    system_prompt = build_prompt(prompt_variant)
+    system_prompt = build_prompt(
+        prompt_variant, structured_output=all(config.structured_output for config in configs)
+    )
     # Exclusive directory creation prevents accidental destruction of earlier measurements.
     async with httpx.AsyncClient(follow_redirects=False) as client:
         providers = [
@@ -463,6 +463,7 @@ async def run(
 
 
 def main() -> None:
+    load_dotenv(HERE.parents[1] / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="JSON array of provider configs")
     parser.add_argument("--cases", type=Path, default=HERE / "cases.jsonl")

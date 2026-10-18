@@ -5,7 +5,10 @@ from typing import Any
 import pytest
 from processing import (
     DIAGNOSTICS_VERSION,
+    LIST_ATOM_RULES,
+    MISSING_FIELD_RULES,
     PROCESSING_VERSION,
+    SCALAR_ATOM_OPERATORS,
     consistency_issues,
     derive_missing_fields,
     process_extraction,
@@ -44,6 +47,21 @@ def atom(field: str, operator: str, value: str) -> dict[str, str]:
 
 def codes(value: Extraction) -> set[str]:
     return {issue["code"] for issue in consistency_issues(value)}
+
+
+def test_rule_mappings_reference_schema_fields() -> None:
+    value = extraction()
+    assert list(MISSING_FIELD_RULES) == value.missing_fields
+    for fields, is_missing in MISSING_FIELD_RULES.values():
+        assert fields and set(fields) <= Extraction.model_fields.keys()
+        assert is_missing in (all, any)
+    for field, (kind, operator) in LIST_ATOM_RULES.items():
+        assert isinstance(getattr(value, field), list)
+        assert kind in ("hard_constraints", "soft_constraints")
+        assert operator in ("prefer", "include", "exclude")
+    assert set(SCALAR_ATOM_OPERATORS) <= Extraction.model_fields.keys()
+    assert "budget_scope" not in SCALAR_ATOM_OPERATORS
+    assert derive_missing_fields(extraction(budget_scope="total")) == value.missing_fields
 
 
 def test_versions_and_all_gold_outputs() -> None:

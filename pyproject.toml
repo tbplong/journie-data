@@ -14,6 +14,7 @@ dependencies = [
   "polars>=1.30,<2",
   "pyarrow>=20,<22",
   "pydantic>=2.11,<3",
+  "python-dotenv>=1.1,<2",
   "pyyaml>=6.0,<7",
   "selectolax>=0.3,<1",
   "typer>=0.16,<1",
