@@ -13,15 +13,16 @@ import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from dotenv import load_dotenv
 from processing import (
     DIAGNOSTICS_VERSION,
+    PROCESSING_POLICIES,
     PROCESSING_VERSION,
+    PROCESSORS,
     consistency_issues,
-    process_extraction,
 )
 from prompts import PROMPT_VERSIONS, RESPONSE_SCHEMA, PromptVariant, build_prompt
 from providers import GeminiProvider, LLMProvider, OpenAICompatibleProvider, ProviderConfig
@@ -32,9 +33,52 @@ HERE = Path(__file__).resolve().parent
 SYSTEM_PROMPT = build_prompt()
 
 
+# Gold for a rejected instruction attack: nothing extracted and no clarification requested.
+REJECTED = Extraction.model_validate(
+    {
+        **dict.fromkeys(
+            (
+                "destination",
+                "start_date",
+                "end_date",
+                "duration_days",
+                "budget_vnd",
+                "budget_scope",
+                "available_start",
+                "available_end",
+            ),
+            None,
+        ),
+        **dict.fromkeys(
+            (
+                "interests",
+                "must_visit",
+                "avoid",
+                "preferred_places",
+                "hard_constraints",
+                "soft_constraints",
+                "possible_conflicts",
+            ),
+            [],
+        ),
+        "missing_fields": ["destination", "travel_dates_or_duration", "budget", "available_time"],
+        "needs_clarification": False,
+    }
+)
+
+
+def requirement_types(extraction: Extraction) -> int:
+    """Distinct constraint fields in an output: 1-2 is basic, 3 or more is multiple."""
+    return len({c.field for c in extraction.hard_constraints + extraction.soft_constraints})
+
+
 class Case(StrictModel):
     id: str
     category: str
+    # Dataset v3 hierarchy; absent in v2, where category is the only label.
+    user_part: Literal["basic", "multiple"] | None = None
+    non_user_part: Literal["adversarial", "off_topic"] | None = None
+    traits: list[Literal["noisy", "missing", "conflicting"]] = []
     user_input: str
     expected_output: Extraction
     expected_constraints: dict[str, list[dict[str, str]]]
@@ -52,6 +96,56 @@ class Case(StrictModel):
         if self.expected_conflicts != gold["possible_conflicts"]:
             raise ValueError("expected_conflicts differs from expected_output")
         return self
+
+    @model_validator(mode="after")
+    def consistent_hierarchy(self) -> Case:
+        if self.user_part is None and self.non_user_part is None:
+            if self.traits:
+                raise ValueError("traits require a v3 user_part or non_user_part")
+            return self
+        if self.category != (self.non_user_part or self.user_part):
+            raise ValueError("category must be the non-user part if present, else the user part")
+        if self.traits and self.user_part is None:
+            raise ValueError("traits describe the user part")
+        if self.non_user_part == "adversarial":
+            # Attacks are rejected wholesale; user_part/traits describe the input, not the gold.
+            if self.expected_output != REJECTED:
+                raise ValueError("adversarial gold must be the empty, no-clarification extraction")
+            return self
+        types = requirement_types(self.expected_output)
+        if self.user_part is None and types:
+            raise ValueError("gold requirements need a user_part")
+        if self.user_part is not None and self.user_part != ("basic" if types <= 2 else "multiple"):
+            raise ValueError("user_part must be basic for 0-2 requirement types, else multiple")
+        if ("conflicting" in self.traits) != bool(self.expected_output.possible_conflicts):
+            raise ValueError("conflicting trait must match gold conflicts")
+        return self
+
+
+def summary_groups(cases: list[Case]) -> dict[str, set[str]]:
+    """Case IDs per primary category, then per v3 hierarchy node; a case may join several."""
+    groups = {
+        category: {case.id for case in cases if case.category == category}
+        for category in sorted({case.category for case in cases})
+    }
+    nodes: dict[str, set[str]] = {}
+    for case in cases:
+        labels = [f"trait:{trait}" for trait in case.traits]
+        if case.user_part:
+            labels += ["user_input", f"user_input:{case.user_part}"]
+        if case.non_user_part:
+            labels += ["non_user_input", f"non_user_input:{case.non_user_part}"]
+        for label in labels:
+            nodes.setdefault(label, set()).add(case.id)
+    return groups | dict(sorted(nodes.items()))
+
+
+def matching_cases(cases_sha256: object) -> Path:
+    """Dataset file beside this module whose bytes produced a run's recorded hash."""
+    for path in sorted(HERE.glob("cases*.jsonl")):
+        if fingerprint(path.read_bytes()) == cases_sha256:
+            return path
+    raise ValueError("No dataset file matches the run's cases_sha256; supply --cases")
 
 
 def load_cases(path: Path) -> list[Case]:
@@ -79,6 +173,7 @@ async def execute(
     pass_index: int,
     warmup: bool = False,
     prompt_variant: PromptVariant = "baseline",
+    processing: str = PROCESSING_VERSION,
 ) -> dict:
     system_prompt = build_prompt(prompt_variant, structured_output=config.structured_output)
     row: dict[str, Any] = {
@@ -163,15 +258,21 @@ async def execute(
             }
     row["validation_seconds"] = time.perf_counter() - validation_started
     row["metrics"] = score(parsed, case.expected_output)
-    add_processing(row, parsed, case.expected_output)
+    add_processing(row, parsed, case.expected_output, processing)
     return row
 
 
-def add_processing(row: dict, parsed: Extraction | None, expected: Extraction) -> None:
+def add_processing(
+    row: dict,
+    parsed: Extraction | None,
+    expected: Extraction,
+    processing: str = PROCESSING_VERSION,
+) -> None:
     """Keep every raw result field intact; processing never receives the gold output."""
     started = time.perf_counter()
-    processed = process_extraction(parsed) if parsed is not None else None
+    processed, repairs = PROCESSORS[processing](parsed) if parsed is not None else (None, None)
     row["processed_output"] = processed.model_dump() if processed is not None else None
+    row["repairs"] = repairs
     row["consistency_issues"] = consistency_issues(processed) if processed is not None else None
     row["missing_fields_changed"] = (
         parsed is not None
@@ -283,6 +384,13 @@ def summarize_processed(rows: list[dict], wall_seconds: float | None = None) -> 
             ),
             len(checked),
         )
+    summary["repaired_outputs_rate_valid_outputs"] = ratio(
+        sum(bool(set(row.get("repairs") or []) - {"missing_fields"}) for row in checked),
+        len(checked),
+    )
+    summary["repair_counts"] = dict(
+        Counter(code for row in checked for code in row.get("repairs") or [])
+    )
     summary["consistency_issue_counts"] = dict(
         Counter(issue["code"] for row in checked for issue in row["consistency_issues"])
     )
@@ -318,6 +426,7 @@ async def run(
     seed: int,
     cases_hash: str,
     prompt_variant: PromptVariant = "baseline",
+    processing: str = PROCESSING_VERSION,
 ) -> None:
     system_prompt = build_prompt(
         prompt_variant, structured_output=all(config.structured_output for config in configs)
@@ -347,9 +456,9 @@ async def run(
             "system_prompt": system_prompt,
             "prompt_variant": prompt_variant,
             "prompt_version": PROMPT_VERSIONS[prompt_variant],
-            "processing_version": PROCESSING_VERSION,
+            "processing_version": processing,
             "diagnostics_version": DIAGNOSTICS_VERSION,
-            "processing_policy": "only missing_fields changed; diagnostics never repair",
+            "processing_policy": PROCESSING_POLICIES[processing],
             "schema": RESPONSE_SCHEMA,
             "providers": [c.model_dump() for c in configs],
             "annotation_status": "draft; human review required",
@@ -373,7 +482,13 @@ async def run(
                     )
                     for index in range(warmups):
                         row = await execute(
-                            provider, config, cases[index % len(cases)], 0, True, prompt_variant
+                            provider,
+                            config,
+                            cases[index % len(cases)],
+                            0,
+                            True,
+                            prompt_variant,
+                            processing,
                         )
                         warming.write(json.dumps(row, ensure_ascii=False) + "\n")
                         warming.flush()
@@ -393,6 +508,7 @@ async def run(
                                     case,
                                     pass_index,
                                     prompt_variant=prompt_variant,
+                                    processing=processing,
                                 )
                                 collected.append(row)
                                 provider_rows.append(row)
@@ -428,15 +544,14 @@ async def run(
                                 **summarize_processed(provider_rows, wall_seconds),
                             }
                         )
-                    for category in sorted({case.category for case in cases}):
+                    for category, ids in summary_groups(cases).items():
+                        selected = [r for r in provider_rows if r["test_case_id"] in ids]
                         summaries.append(
                             {
                                 "provider": config.name,
                                 "model": config.model,
                                 "category": category,
-                                **summarize(
-                                    [r for r in provider_rows if r["category"] == category]
-                                ),
+                                **summarize(selected),
                             }
                         )
                         processed_summaries.append(
@@ -444,9 +559,7 @@ async def run(
                                 "provider": config.name,
                                 "model": config.model,
                                 "category": category,
-                                **summarize_processed(
-                                    [r for r in provider_rows if r["category"] == category]
-                                ),
+                                **summarize_processed(selected),
                             }
                         )
             completed = True
@@ -466,7 +579,7 @@ def main() -> None:
     load_dotenv(HERE.parents[1] / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="JSON array of provider configs")
-    parser.add_argument("--cases", type=Path, default=HERE / "cases.jsonl")
+    parser.add_argument("--cases", type=Path, default=HERE / "cases_v3.jsonl")
     parser.add_argument("--output", type=Path, required=True, help="New directory; must not exist")
     parser.add_argument(
         "--provider", action="append", help="Select config name; repeat to select more"
@@ -476,6 +589,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--limit", type=int, help="Smoke-test only the first N cases")
     parser.add_argument("--prompt-variant", choices=tuple(PROMPT_VERSIONS), default="baseline")
+    parser.add_argument(
+        "--processing",
+        choices=tuple(PROCESSORS),
+        default=PROCESSING_VERSION,
+        help="Post-processing version; repair-v2 also fixes self-contradictions",
+    )
     args = parser.parse_args()
     if args.passes < 1 or args.warmups < 0 or (args.limit is not None and args.limit < 1):
         parser.error("passes and limit must be positive; warmups must be nonnegative")
@@ -505,6 +624,7 @@ def main() -> None:
                 args.seed,
                 fingerprint(args.cases.read_bytes()),
                 args.prompt_variant,
+                args.processing,
             )
         )
     except ValidationError as exc:

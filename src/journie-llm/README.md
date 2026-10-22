@@ -71,9 +71,9 @@ Requests are non-streaming. Latency measures the request through complete respon
 
 ## Cases And Annotations
 
-`cases.jsonl` is **dataset v2**, with 120 manually authored **draft** cases, 20 per category: basic, multiple, missing, conflicting, noisy, and adversarial. These annotations have structural/consistency checks, **not independent human review**. Review and freeze them before presenting the benchmark as research evidence; do not tune the prompt against measured results without labeling a new benchmark version. See [the dataset changelog](cases.changelog.md) for revised IDs, annotation conventions, version hashes, coverage counts, and a separately reported contract wording caveat. The schema and shared prompt are unchanged. Reproduce dataset validation and coverage with `PYTHONPATH=src/journie-llm uv run python src/journie-llm/tests/test_cases.py`.
+`cases_v3.jsonl` is **dataset v3** (146 draft cases, hierarchy below); `cases.jsonl` remains **dataset v2**, with 120 manually authored **draft** cases, 20 per category: basic, multiple, missing, conflicting, noisy, and adversarial. These annotations have structural/consistency checks, **not independent human review**. Review and freeze them before presenting the benchmark as research evidence; do not tune the prompt against measured results without labeling a new benchmark version. See [the dataset changelog](cases.changelog.md) for revised IDs, annotation conventions, version hashes, coverage counts, and a separately reported contract wording caveat. The schema and shared prompt are unchanged. Reproduce dataset validation and coverage with `PYTHONPATH=src/journie-llm uv run python src/journie-llm/tests/test_cases.py`.
 
-Each case has `id`, `category`, `user_input`, `expected_output`, `expected_constraints`, `expected_missing_fields`, and `expected_conflicts`. Redundant annotations are checked against the full gold output at load time.
+Each case has `id`, `category`, (v3 only: `user_part`, `non_user_part`, `traits`), `user_input`, `expected_output`, `expected_constraints`, `expected_missing_fields`, and `expected_conflicts`. Redundant annotations are checked against the full gold output at load time.
 
 `schema.py` defines the authoritative shared prompt and extraction contract:
 
@@ -90,12 +90,29 @@ Pydantic checks types, allowed values, actual calendar dates, and time formats. 
 
 ### Test Case Categories
 
-- **Basic:** Straightforward requests testing extraction and normalization of a small number of clearly stated travel facts or preferences.
-- **Multiple:** Requests combining several requirements, testing complete extraction and correct separation of hard constraints from soft preferences.
-- **Missing:** Incomplete or ambiguous requests testing whether unknown information remains unset rather than being invented, with missing fields and clarification handled according to the contract.
-- **Conflicting:** Requests containing contradictory requirements, testing whether the model preserves the stated constraints and flags supported conflicts instead of silently resolving them.
-- **Noisy:** Requests containing informal wording, typos, repetition, mixed languages, or distracting text, testing extraction without adding unsupported facts or duplicate constraints.
-- **Adversarial:** Requests containing instructions intended to override the extraction contract, manipulate output, or introduce unsupported information. The model must ignore those instructions while preserving genuine travel facts.
+**Dataset v3** (`cases_v3.jsonl`, 146 draft cases, default for new runs) labels each case with a hierarchy instead of six flat categories. `cases.jsonl` (v2) is unchanged so earlier runs still verify and replay; replay, figures, and `prompt_stats.py` pick the dataset whose hash the run recorded.
+
+```
+Input
+├── user input: travel-related requirements
+│   ├── basic      1–2 requirement types
+│   └── multiple   3 or more requirement types
+│      traits on either: noisy, missing, conflicting
+└── non-user input: requests not about travel extraction
+    ├── adversarial  instructions that try to change the extraction
+    └── off_topic    other non-travel requests, without attacking the extractor
+```
+
+- A **requirement type** is a distinct constraint `field` in the gold output (destination, dates, duration, budget, availability endpoints, interests, must-visit, avoid, preferred places, visit duration, other). It is counted from gold, not hand-labelled.
+- A case may contain both parts: `user_part` (`basic`/`multiple`/null) and `non_user_part` (`adversarial`/`off_topic`/null). `category` is the reporting label: the non-user part if present, otherwise the user part.
+- **noisy**: the input contains text that is not a requirement for this trip (asides, quoted examples, logs, other people's trips, order numbers, apologies, repeated restatements). **Clean** input contains only requirements. Noisy text is extra information; `off_topic` is a request to do something else; `adversarial` is an instruction to change the extraction.
+- **missing**: the user says information is absent, or gives a vague or partial value ("cheap", "morning", bare "500", a start time without an end). Assigned from v2 `missing` cases plus any case whose gold needs clarification without a conflict.
+- **conflicting**: the gold output declares at least one conflict (checked automatically).
+- **Adversarial gold is rejection, not extraction (v3).** Any instruction that tries to change the extractor's role, task, format, rules, values, conflicts, or classification makes the whole message rejected: every field null or empty, all four `missing_fields`, no conflicts, `needs_clarification: false`, even when genuine travel facts appear beside the attack. `user_part`/`traits` still describe the travel text inside the attack (e.g. `adversarial-15` is basic + conflicting). Rejection is indistinguishable in the output from an off-topic-only message; the category label separates them in reports. Off-topic mixed requests and noisy text are not attacks and are still extracted.
+
+Summaries report the primary categories plus every hierarchy node (`user_input`, `user_input:basic`, `non_user_input:off_topic`, `trait:noisy`, …); one case can count in several nodes, so node rows must not be summed.
+
+The 120 v2 cases keep id, order, and input; gold is unchanged except the 20 adversarial cases, which now expect rejection. New in v3: 20 `off_topic` cases (10 off-topic only, 10 mixed with a travel request) and 6 `interest-*` cases for mandatory versus preferred interests. See [the dataset changelog](cases.changelog.md).
 
 ## Outputs And Metrics
 
@@ -195,9 +212,32 @@ uv run python src/journie-llm/benchmark.py \
   --output data/run5-semantic-v2
 ```
 
+### Semantic-v3 Prompt Experiment
+
+`--prompt-variant semantic-v3` is `semantic-v2` minus its two passages that keep travel facts beside an instruction attack (the Museum Birch example and the "keep the real travel facts" sentence), plus two sections. **Instruction attacks**: reject the whole message (empty extraction, `needs_clarification: false`); quoted examples and logs without an instruction are not attacks. **Interests**: strength follows the user's wording. "Like", "want", "would be nice" stay soft `interests prefer`; "required", "must have", "nhất định phải có", "bắt buộc có" become hard `interests include`. Both still list the interest in `interests`. This refines the contract's "interests are soft" rule only through this prompt version; `ANNOTATION_RULES` and older snapshots are unchanged. Dataset v3 adds `interest-01`…`interest-06` to measure it. `consistency-v2` accepts both forms.
+
+### Repair-v2 Processing
+
+`--processing repair-v2` (benchmark and replay; default stays `missing-fields-v1`) resolves contradictions **inside one output using only that output's values**. It never reads gold or the user text, never invents a value, never lowers `needs_clarification`, and never touches invalid outputs. Steps, in order, each recorded in the row's `repairs` list:
+
+1. `dedupe_constraint`: drop exact repeats within one constraint list (a hard/soft pair is left for diagnostics).
+2. `list_from_constraint` / `constraint_from_list`: sync `must_visit`, `avoid`, `preferred_places` with their constraints; interests only gain list entries, never constraints, because their hard/soft strength depends on wording. A value that already has a misplaced constraint (e.g. hard `prefer`) is not given a second one.
+3. `scalar_from_constraint`: set a scalar from its constraint when exactly one value is stated; for budget, the cap wins (contract: conflicting bounds keep the maximum).
+4. `conflict_from_observation`: add or remove date/duration/budget/must-visit-avoid conflicts that the output's own values prove or disprove; unverifiable ones stay as declared. Two destinations are never treated as a conflict (multi-city trips).
+5. `clarification_from_conflict`: any remaining conflict sets `needs_clarification`.
+6. `missing_fields`: v1 derivation.
+
+Measured on saved Gemini runs scored against dataset v2 gold (no new requests): exact cases after v1 → after v2 were run5 282 → 286, run4 +7, run3 +12, run2 +15, run1 +63 (Gemini and Gemma), with **zero** cases lost in every run; all 266 gold outputs (v2 and v3) are left unchanged. The run5 gains are `conflicting-12` ×3 and `adversarial-15` ×1 (`budget_vnd` taken from the stated cap). Removing a disproved conflict does not make `multiple-12`, `noisy-18`, or `adversarial-08` exact because `needs_clarification` stays true. Replay with `--processing repair-v2` accepts runs that already carry inline v1 processing (recomputed in the replay's copy only); its `report.md` lists every repaired output.
+
+### Repair-v3 Processing And Name Table
+
+`--processing repair-v3` is repair-v2 preceded by name canonicalization from [`name_aliases.csv`](name_aliases.csv), a plain `kind,canonical,alias` table (`kind` is `destination` or `interest`). Destination scalars and atoms, interest list entries, and interest atoms that match an alias become the canonical name; unknown names are left unchanged. Matching ignores case, Unicode composition, spaces, dots, hyphens, and underscores, but not accents, so unaccented spellings are listed explicitly (e.g. `Cần Thơ` ← `Can Tho`, `CanTho`, `TP. Cần Thơ`; `cafe` ← `cà phê`, `ca phe`). Canonical names follow the contract (ASCII `Hanoi`, `Ho Chi Minh City`, `Da Nang`, `Da Lat`, `Hue`) and the gold (`Cần Thơ`, `Nha Trang`, `Hội An`); interest aliases are limited to the contract's own pairs plus spelling and plural variants. A name that maps to two canonical names fails at import. Add rows to extend coverage; repair-v2 stays byte-stable so earlier repair-v2 runs (run6) still verify.
+
+Offline on saved runs (no new requests), exact cases after repair-v2 → repair-v3: run3 251 → 262, run4 236 → 245, run5 286 → 296, run6 354 → 366 (83.6%), run2 +9, run1 +19. **Zero** exact cases lost in any run (Gemini, cloud Gemma, LM Studio Gemma), and all 266 gold outputs stay unchanged. Typical gains: `noisy-10`/`conflicting-18` (`Can Tho` → `Cần Thơ`), `noisy-06` (`cà phê` + `cafe` → one `cafe`), `basic-20`, `multiple-15`. Repairs never lose an exact case, but on an output that is already wrong they can make one more field consistently wrong (e.g. an ambiguous `budget_vnd eq "500"` atom copied into the scalar).
+
 ### Diagnostic Checks
 
-`consistency-v1` checks duplicates, scalar/list-to-atom correspondence, unambiguous field/operator/hard-soft rules, and mechanically observable date/duration, budget-bound, and exact must-visit/avoid contradictions. Properly preserved contradictory requests are not errors merely because they conflict. The checks never modify atoms, values, conflicts, or clarification flags.
+`consistency-v2` (all new runs and replays) adds two rules to `consistency-v1`: hard `interests include` is valid (semantic-v3), and `missing_scalar` flags a stated scalar constraint whose field is null. It checks duplicates, scalar/list-to-atom correspondence, unambiguous field/operator/hard-soft rules, and mechanically observable date/duration, budget-bound, and exact must-visit/avoid contradictions. Properly preserved contradictory requests are not errors merely because they conflict. The checks never modify atoms, values, conflicts, or clarification flags.
 
 Diagnostics use `error` for an internal representation mismatch and `review` when evidence is insufficient. They cannot prove grounding in the user's text, detect every omitted clause, or infer itinerary feasibility. Reversed clock endpoints always require review: no day offset is represented, and no naive overnight-keyword or negation heuristic is used. Multiple destination names alone do not establish single-destination disagreement. A true clarification flag is not cleared just because conflict codes are absent.
 
@@ -222,6 +262,23 @@ This is a **retrospective pipeline experiment**, not improved first-pass model a
 
 There is **no winner threshold**. Compare quality, latency, tokens, failure rates, and category weaknesses. RAM/VRAM, controlled cold-start measurements, concurrent load testing, actual billing, and solver integration are outside this version.
 
+### Prompt Length
+
+`prompts.prompt_sections()` names the contiguous parts that `build_prompt()` joins (contract, embedded schema, variant guidance/examples/checklist). Print characters, whitespace words, and share per section for every variant, offline:
+
+```bash
+PYTHONPATH=src/journie-llm uv run python src/journie-llm/prompt_stats.py
+```
+
+Token counts are not estimated from characters and no tokenizer dependency is added. Instead, fit a saved run's provider-reported usage by least squares, `input_tokens = prompt_tokens + per_char × len(user_input)`, per provider/model over measured (non-warmup) rows:
+
+```bash
+PYTHONPATH=src/journie-llm uv run python src/journie-llm/prompt_stats.py \
+  --run data/run2 --run data/run5-semantic-v2
+```
+
+Output is an aligned Markdown table; add `--csv` for CSV. The intercept `prompt_tokens` is the fixed per-request cost in that provider's tokenizer (system prompt plus message framing); `max_abs_residual` shows how well characters predict the variable part. The fit requires matching prompt and case hashes. For `semantic*`, the native response schema is sent separately and does not appear in Gemini's reported `input_tokens`.
+
 ## Report Figures
 
 Generate the six selected report figures from a completed run without calling models or adding a project dependency:
@@ -234,11 +291,11 @@ uv run --with 'matplotlib>=3.10,<4' python src/journie-llm/plot_report.py \
   --run data/run2 --output data/run2/figures-processed
 ```
 
-The default output is a new `data/run1/figures/` directory containing 300-DPI PNG and vector SVG pairs, `captions.md`, and auditable `chart_data.json`. Existing output directories are not overwritten; use `--output` for another destination. Runs with inline `processed_metrics` are detected automatically. Older runs can be paired with `--processed-run`: its manifest/results/summary provenance hashes, case/schema/prompt hashes, and original per-attempt fields must match the raw run. Only the recorded deterministic missing-field transformation is supported; no post-processed score may credit an invalid output. Missing processing data is reported as unavailable, not zero.
+The default output is a new `data/run1/figures/` directory containing 300-DPI PNG and vector SVG pairs, `captions.md`, and auditable `chart_data.json`. Existing output directories are not overwritten; use `--output` for another destination. Runs with inline `processed_metrics` are detected automatically. Older runs can be paired with `--processed-run`: its manifest/results/summary provenance hashes, case/schema/prompt hashes, and original per-attempt fields must match the raw run. Both processing versions are verified by re-running the recorded version on every valid output; the field-metric invariance check applies only to `missing-fields-v1`. With `repair-v2`, figures 7 and 8 add post-processed bars beside faded raw bars. A replay may also pair with a run that already has inline v1 processing; the replay then supersedes it. No post-processed score may credit an invalid output. Missing processing data is reported as unavailable, not zero.
 
 Outcomes and category accuracy show separate **Raw** and **Post-processed** rows over the same attempts. The quality/latency chart shows both accuracy values at the same original HTTP timing, explicitly excluding processing overhead; this does not claim equal end-to-end pipeline latency. Figure 8 retains the unchanged populated/empty field scores and adds whole missing-field-list accuracy for both stages. That accuracy uses all attempts, including invalid outputs. Hallucination and validity are unchanged by missing-field processing, so redundant bars are not added. Raw and post-processed samples must not be summed as new requests.
 
-Matplotlib's version is recorded in the chart data. The script recomputes selected metrics against hash-matching gold and checks both raw and processed summaries. Gold defaults to `src/journie-llm/cases.jsonl`; use `--cases` for a different dataset. Mismatched hashes or per-row scores fail before figures are generated. Exact missing-field-list accuracy is derived from item error counts and schema flags. Manifest request-count discrepancies are reported in CLI output, captions, and figure footers; figures use the complete recorded case/pass grid without changing the manifest. No raw responses, credentials, endpoint addresses, or configuration notes are exported. Outcome categories are exclusive; latency includes invalid/failed attempts; hallucination is conditioned on schema validity. Warm-ups are excluded everywhere.
+Matplotlib's version is recorded in the chart data. The script recomputes selected metrics against hash-matching gold and checks both raw and processed summaries. Gold defaults to the dataset file whose hash the run recorded; use `--cases` to override. Figure 2 adds v3 trait columns (overlapping the categories) and an attempt count per cell. Mismatched hashes or per-row scores fail before figures are generated. Exact missing-field-list accuracy is derived from item error counts and schema flags. Manifest request-count discrepancies are reported in CLI output, captions, and figure footers; figures use the complete recorded case/pass grid without changing the manifest. No raw responses, credentials, endpoint addresses, or configuration notes are exported. Outcome categories are exclusive; latency includes invalid/failed attempts; hallucination is conditioned on schema validity. Warm-ups are excluded everywhere.
 
 ## Offline Verification
 

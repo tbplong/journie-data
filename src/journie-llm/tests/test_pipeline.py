@@ -15,6 +15,7 @@ import prompts
 import pytest
 from processing import (
     DIAGNOSTICS_VERSION,
+    PROCESSING_POLICIES,
     PROCESSING_VERSION,
     consistency_issues,
     derive_missing_fields,
@@ -130,9 +131,16 @@ def test_prompt_contract_without_gold_loading(monkeypatch: pytest.MonkeyPatch) -
     assert structured.count("JSON Schema:\n") == 1
     assert "FEW-SHOT EXAMPLES" in structured and "SELF-VERIFICATION" in structured
     assert json.dumps(prompts.STRUCTURED_EXAMPLES, ensure_ascii=False, indent=2) in structured
-    for variant in ("semantic", "semantic-v2"):
+    for variant in ("semantic", "semantic-v2", "semantic-v3"):
         semantic = prompts.build_prompt(cast(prompts.PromptVariant, variant))
-        assert semantic.startswith(ANNOTATION_RULES + prompts.SEMANTIC_GUIDANCE)
+        assert semantic.startswith(
+            ANNOTATION_RULES
+            + (
+                prompts.SEMANTIC_V3_BASE_GUIDANCE
+                if variant == "semantic-v3"
+                else prompts.SEMANTIC_GUIDANCE
+            )
+        )
         assert "SEMANTIC EXAMPLES" in semantic and semantic.count("SELF-VERIFICATION") == 1
         assert "JSON Schema:\n" not in semantic
         assert json.dumps(prompts.RESPONSE_SCHEMA, ensure_ascii=False) not in semantic
@@ -155,6 +163,17 @@ def test_prompt_contract_without_gold_loading(monkeypatch: pytest.MonkeyPatch) -
         assert section in semantic_v2
     assert "Vườn Mây:55" in semantic_v2
     assert semantic_v2.endswith(prompts.SEMANTIC_V2_CHECKLIST)
+    assert prompts.SEMANTIC_V3_GUIDANCE not in semantic_v2
+    semantic_v3 = prompts.build_prompt("semantic-v3")
+    # v3 = v2 without the two keep-facts-beside-an-attack passages, plus the v3 section.
+    assert prompts.ATTACK_EXAMPLE in semantic_v2 and prompts.ATTACK_FACTS_RULE in semantic_v2
+    assert semantic_v3 == semantic_v2.replace(prompts.ATTACK_EXAMPLE, "").replace(
+        prompts.ATTACK_FACTS_RULE, ""
+    ).replace(
+        prompts.SEMANTIC_V2_CHECKLIST,
+        prompts.SEMANTIC_V3_GUIDANCE + prompts.SEMANTIC_V2_CHECKLIST,
+    )
+    assert "INSTRUCTION ATTACKS" in semantic_v3 and "hard interests include" in semantic_v3
     with pytest.raises(ValueError, match="Unknown prompt variant"):
         prompts.build_prompt(cast(prompts.PromptVariant, "unknown"))
 
@@ -193,6 +212,7 @@ def test_execute_sends_selected_prompt_only_setting_changed(
         "structured",
         "semantic",
         "semantic-v2",
+        "semantic-v3",
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -246,7 +266,7 @@ def test_execute_sends_selected_prompt_only_setting_changed(
 
 
 @pytest.mark.parametrize("provider", ["gemini", "openai"])
-@pytest.mark.parametrize("variant", ["semantic", "semantic-v2"])
+@pytest.mark.parametrize("variant", ["semantic", "semantic-v2", "semantic-v3"])
 def test_semantic_requires_native_schema_before_requests_or_artifacts(
     provider: Literal["gemini", "openai"],
     variant: prompts.PromptVariant,
@@ -435,7 +455,9 @@ def test_processed_summary_denominators_and_raw_summary_unchanged(
     assert empty["consistency_issue_counts"] == {}
 
 
-@pytest.mark.parametrize("variant", ["reinforced", "structured", "semantic", "semantic-v2"])
+@pytest.mark.parametrize(
+    "variant", ["reinforced", "structured", "semantic", "semantic-v2", "semantic-v3"]
+)
 def test_full_prompt_run_separate_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -464,7 +486,11 @@ def test_full_prompt_run_separate_artifacts(
 
     monkeypatch.setattr(benchmark.httpx, "AsyncClient", client_factory)
     output = tmp_path / variant
-    asyncio.run(benchmark.run([config()], cases, output, 2, 1, 42, "generated-hash", variant))
+    # semantic-v3 also exercises the opt-in repair-v2 processing.
+    processing = "repair-v2" if variant == "semantic-v3" else PROCESSING_VERSION
+    asyncio.run(
+        benchmark.run([config()], cases, output, 2, 1, 42, "generated-hash", variant, processing)
+    )
     manifest = json.loads((output / "manifest.json").read_text())
     prompt = prompts.build_prompt(variant)
     assert manifest["complete"] and manifest["measured_requests"] == 6
@@ -473,7 +499,8 @@ def test_full_prompt_run_separate_artifacts(
     assert manifest["system_prompt"] == prompt
     assert manifest["prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
     assert manifest["schema"] == Extraction.model_json_schema()
-    assert manifest["processing_version"] == PROCESSING_VERSION
+    assert manifest["processing_version"] == processing
+    assert manifest["processing_policy"] == PROCESSING_POLICIES[processing]
     assert manifest["diagnostics_version"] == DIAGNOSTICS_VERSION
     assert benchmark.SYSTEM_PROMPT == prompts.build_prompt("baseline")
     rows = [json.loads(line) for line in (output / "results.jsonl").read_text().splitlines()]
@@ -487,6 +514,7 @@ def test_full_prompt_run_separate_artifacts(
         assert row["schema_valid"] == row["missing_fields_changed"] == valid
         assert row["processed_metrics"]["complete_case_accuracy"] == int(valid)
         assert row["parsed_output"]["missing_fields"] == []
+        assert row["repairs"] == (["missing_fields"] if valid else None)
         if not valid:
             assert row["processed_output"] is row["consistency_issues"] is None
     for stem, summarize in (

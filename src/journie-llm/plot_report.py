@@ -10,10 +10,11 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
-from processing import PROCESSING_VERSION, process_extraction
+from benchmark import matching_cases
+from processing import PROCESSING_VERSION, PROCESSORS
+from replay_processing import PROCESSING_FIELDS
 from schema import Extraction, score
 
-CATEGORIES = ("basic", "multiple", "missing", "conflicting", "noisy", "adversarial")
 LABELS = {
     "gemini": "Gemini\n3.5 Flash Lite",
     "gemma": "Cloud Gemma\n4 26B A4B",
@@ -108,7 +109,7 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
         name: hashlib.sha256((run / name).read_bytes()).hexdigest()
         for name in ("manifest.json", "results.jsonl", "summary.json")
     }
-    cases = cases or Path(__file__).with_name("cases.jsonl")
+    cases = cases or matching_cases(manifest["cases_sha256"])
     cases_hash = hashlib.sha256(cases.read_bytes()).hexdigest()
     if cases_hash != manifest["cases_sha256"]:
         raise ValueError("Gold case-file hash differs from run; supply the matching --cases file")
@@ -122,6 +123,13 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
         if len(gold) != len(case_records):
             raise ValueError("Duplicate gold case IDs")
         gold_categories = {case["id"]: case["category"] for case in case_records}
+        # Figure columns follow the dataset's own category order (v2: six, v3: four), then
+        # v3 traits, which overlap the categories.
+        categories = tuple(dict.fromkeys(gold_categories.values()))
+        trait_ids: dict[str, set[str]] = {}
+        for case in case_records:
+            for trait in case.get("traits", []):
+                trait_ids.setdefault(f"trait:{trait}", set()).add(case["id"])
         for row in rows:
             if (
                 type(row["schema_valid"]) is not bool
@@ -157,10 +165,12 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
     if any(inline) and not all(inline):
         raise ValueError("Only some measured rows contain processed metrics")
     if processed_run is not None and any(inline):
-        raise ValueError("Run already contains processed metrics; omit --processed-run")
-    processed_rows = rows if rows and all(inline) else None
+        # A replay of an inline-processed run supersedes it; compare raw fields only.
+        rows = [{k: v for k, v in row.items() if k not in PROCESSING_FIELDS} for row in rows]
+    processed_rows = rows if rows and all(inline) and processed_run is None else None
     processed_sources: dict[str, str] = {}
     processing_origin = None
+    processing_version = None
     processed_summary = None
     if processed_run is not None:
         processed_manifest = json.loads(
@@ -207,10 +217,8 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
             (run / "processed_summary.json").read_bytes()
         ).hexdigest()
     if processed_rows is not None:
-        if processing_version != PROCESSING_VERSION:
-            raise ValueError(
-                "Unsupported processing version: cannot assume missing-fields-only changes"
-            )
+        if processing_version not in PROCESSORS:
+            raise ValueError(f"Unsupported processing version: {processing_version}")
         for raw, processed in zip(rows, processed_rows, strict=True):
             if not raw["schema_valid"]:
                 if (
@@ -223,13 +231,13 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
                 extraction = Extraction.model_validate(raw["parsed_output"])
             except ValueError:
                 raise ValueError("Schema-valid source row has invalid parsed_output") from None
-            expected = process_extraction(extraction).model_dump()
+            expected = PROCESSORS[processing_version](extraction)[0].model_dump()
             if processed["processed_output"] != expected:
                 raise ValueError(
-                    "Processed output differs from deterministic missing-field processing"
+                    f"Processed output differs from deterministic {processing_version} processing"
                 )
             before, after = raw["metrics"], processed["processed_metrics"]
-            if {
+            if processing_version == PROCESSING_VERSION and {
                 key: value
                 for key, value in before.items()
                 if key
@@ -295,7 +303,11 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
                 "overall": aggregate(selected),
                 "categories": {
                     category: aggregate([r for r in selected if r["category"] == category])
-                    for category in CATEGORIES
+                    for category in categories
+                }
+                | {
+                    trait: aggregate([r for r in selected if r["test_case_id"] in ids])
+                    for trait, ids in sorted(trait_ids.items())
                 },
                 "processed_overall": aggregate(processed_selected, "processed_metrics")
                 if processed_selected is not None
@@ -305,7 +317,14 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
                         [r for r in processed_selected if r["category"] == category],
                         "processed_metrics",
                     )
-                    for category in CATEGORIES
+                    for category in categories
+                }
+                | {
+                    trait: aggregate(
+                        [r for r in processed_selected if r["test_case_id"] in ids],
+                        "processed_metrics",
+                    )
+                    for trait, ids in sorted(trait_ids.items())
                 }
                 if processed_selected is not None
                 else None,
@@ -363,7 +382,7 @@ def load_run(run: Path, processed_run: Path | None = None, cases: Path | None = 
         "sources_sha256": sources,
         "processed_sources_sha256": processed_sources,
         "processing_origin": processing_origin,
-        "processing_version": PROCESSING_VERSION if processed_rows is not None else None,
+        "processing_version": processing_version if processed_rows is not None else None,
         "prompt_variant": manifest.get("prompt_variant", "not recorded"),
         "warnings": warnings,
     }
@@ -409,6 +428,8 @@ def render(data: dict, output: Path) -> None:
     colors = [COLORS[i % len(COLORS)] for i in range(len(models))]
     stats = [model["overall"] for model in models]
     has_processed = all(model["processed_overall"] is not None for model in models)
+    # repair-v2 can change field scores and hallucination; missing-fields-v1 cannot.
+    rescored = has_processed and data["processing_version"] != PROCESSING_VERSION
     stages = [("Raw", "overall", "categories")]
     if has_processed:
         stages.append(("Post-processed", "processed_overall", "processed_categories"))
@@ -507,13 +528,15 @@ def render(data: dict, output: Path) -> None:
     category_rows = [
         (model["label"] + "\n" + stage, model[key]) for model in models for stage, _, key in stages
     ]
+    categories = list(models[0]["categories"])
+    primary = sum(not category.startswith("trait:") for category in categories)
     matrix = [
-        [100 * group[category]["complete_case_accuracy"] for category in CATEGORIES]
+        [100 * group[category]["complete_case_accuracy"] for category in categories]
         for _, group in category_rows
     ]
     image = ax.imshow(matrix, vmin=0, vmax=100, cmap="YlGnBu", aspect="auto")
     for i, (_, group) in enumerate(category_rows):
-        for j, category in enumerate(CATEGORIES):
+        for j, category in enumerate(categories):
             cell = group[category]
             ink = "white" if matrix[i][j] >= 60 else "#263747"
             ax.text(
@@ -529,13 +552,21 @@ def render(data: dict, output: Path) -> None:
             ax.text(
                 j,
                 i + 0.19,
-                f"Valid: {100 * cell['schema_valid_rate']:.0f}%",
+                f"Valid: {100 * cell['schema_valid_rate']:.0f}%\nn={cell['requests']}",
                 ha="center",
                 va="center",
-                fontsize=9,
+                fontsize=8,
                 color=ink,
             )
-    ax.set_xticks(range(len(CATEGORIES)), [category.title() for category in CATEGORIES])
+    ax.set_xticks(
+        range(len(categories)),
+        [
+            category.replace("trait:", "Trait:\n").replace("_", "-").title()
+            for category in categories
+        ],
+    )
+    if primary < len(categories):
+        ax.axvline(primary - 0.5, color="white", linewidth=6)
     ax.set_yticks(range(len(category_rows)), [label for label, _ in category_rows], fontsize=9)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -545,12 +576,11 @@ def render(data: dict, output: Path) -> None:
         format=PercentFormatter(100),
         label="Complete-case accuracy",
     )
-    category_sizes = {cell["requests"] for _, group in category_rows for cell in group.values()}
-    category_count = str(next(iter(category_sizes))) if len(category_sizes) == 1 else "variable"
     fig.text(
         0.24,
         0.145,
-        f"Each cell: {category_count} attempts; paired stages are not new samples.",
+        "n = attempts per cell; paired stages are not new samples."
+        + (" Trait columns overlap the categories." if primary < len(categories) else ""),
         fontsize=10,
     )
     save(fig, "02_category_accuracy")
@@ -661,7 +691,10 @@ def render(data: dict, output: Path) -> None:
 
     fig, first = figure(
         "Hallucination Rates Need Validity Context",
-        "Raw = post-processed: missing-field processing changes neither hallucination nor validity."
+        "Raw (faded) beside post-processed hallucination; processing never changes validity."
+        if rescored
+        else "Raw = post-processed: missing-field processing changes neither hallucination "
+        "nor validity."
         if has_processed
         else "Unsupported-fact measure; invalid outputs are not hallucination-free.",
         (0.09, 0.26, 0.38, 0.47),
@@ -671,26 +704,37 @@ def render(data: dict, output: Path) -> None:
         (first, "hallucination_rate", "Among schema-valid outputs"),
         (second, "schema_valid_rate", "Schema validity among all attempts"),
     ):
-        for i, (stat, color) in enumerate(zip(stats, colors, strict=True)):
-            rate = stat[metric]
-            if rate is None:
-                ax.text(i, 6, "N/A\nNo valid output", ha="center", fontsize=10)
-                continue
-            ax.bar(i, 100 * rate, color=color, width=0.55)
-            numerator, denominator = (
-                (stat["hallucinated_count"], stat["schema_valid_count"])
-                if (metric == "hallucination_rate")
-                else (stat["schema_valid_count"], stat["requests"])
-            )
-            ax.text(
-                i,
-                100 * rate + 2,
-                f"{100 * rate:.1f}%\n{numerator}/{denominator}",
-                ha="center",
-                va="bottom",
-                fontsize=10,
-                fontweight="bold",
-            )
+        paired = rescored and metric == "hallucination_rate"
+        for i, (model, color) in enumerate(zip(models, colors, strict=True)):
+            for offset, key in (
+                ((-0.17, "overall"), (0.17, "processed_overall")) if paired else ((0, "overall"),)
+            ):
+                stat = model[key]
+                rate = stat[metric]
+                if rate is None:
+                    ax.text(i + offset, 6, "N/A\nNo valid output", ha="center", fontsize=10)
+                    continue
+                ax.bar(
+                    i + offset,
+                    100 * rate,
+                    color=color,
+                    width=0.3 if paired else 0.55,
+                    alpha=0.5 if paired and key == "overall" else 1,
+                )
+                numerator, denominator = (
+                    (stat["hallucinated_count"], stat["schema_valid_count"])
+                    if (metric == "hallucination_rate")
+                    else (stat["schema_valid_count"], stat["requests"])
+                )
+                ax.text(
+                    i + offset,
+                    100 * rate + 2,
+                    f"{100 * rate:.1f}%\n{numerator}/{denominator}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=9 if paired else 10,
+                    fontweight="bold",
+                )
         ax.set_xticks(range(len(models)), labels, fontsize=10)
         ax.set_title(title, fontsize=12, pad=14)
         percent_axis(ax)
@@ -704,35 +748,57 @@ def render(data: dict, output: Path) -> None:
     save(fig, "07_hallucination_diagnostic")
 
     fig, ax = figure(
-        "Field Accuracy And Missing-Field Processing" if has_processed else "Raw Field Accuracy",
-        "Ordinary field scores stay unchanged; only missing-field metadata is recomputed."
+        "Field Accuracy And Post-Processing" if has_processed else "Raw Field Accuracy",
+        "Raw (faded) beside post-processed field scores; repairs can change them."
+        if rescored
+        else "Ordinary field scores stay unchanged; only missing-field metadata is recomputed."
         if has_processed
         else "Raw field accuracy; no processed metrics supplied.",
         (0.09, 0.27, 0.39 if has_processed else 0.85, 0.43),
     )
-    for i, (stat, color) in enumerate(zip(stats, colors, strict=True)):
-        for offset, prefix, hatch, alpha in (
-            (-0.18, "populated_field", None, 1.0),
-            (0.18, "empty_field", "///", 0.55),
-        ):
-            rate = stat[f"{prefix}_accuracy"]
+    field_bars = (
+        (
+            (-0.27, "overall", "populated_field", None, 0.5),
+            (-0.09, "processed_overall", "populated_field", None, 1.0),
+            (0.09, "overall", "empty_field", "///", 0.3),
+            (0.27, "processed_overall", "empty_field", "///", 0.55),
+        )
+        if rescored
+        else (
+            (-0.18, "overall", "populated_field", None, 1.0),
+            (0.18, "overall", "empty_field", "///", 0.55),
+        )
+    )
+    for i, (model, color) in enumerate(zip(models, colors, strict=True)):
+        for offset, key, prefix, hatch, alpha in field_bars:
+            rate = model[key][f"{prefix}_accuracy"]
             if rate is None:
                 ax.text(i + offset, 5, "N/A", ha="center")
                 continue
             ax.bar(
                 i + offset,
                 100 * rate,
-                width=0.32,
+                width=0.16 if rescored else 0.32,
                 color=color,
                 hatch=hatch,
                 alpha=alpha,
                 edgecolor=color,
             )
-            ax.text(i + offset, 100 * rate + 2, f"{100 * rate:.1f}%", ha="center", fontsize=9)
+            ax.text(
+                i + offset,
+                100 * rate + 2,
+                f"{100 * rate:.1f}%",
+                ha="center",
+                fontsize=7 if rescored else 9,
+            )
     ax.set_xticks(range(len(models)), labels, fontsize=9)
     ax.set_ylabel("Correct / evaluated field comparisons", fontsize=10)
     ax.set_title(
-        "Populated vs empty/null (raw = post)" if has_processed else "Raw field scores",
+        "Populated vs empty/null (raw, then post)"
+        if rescored
+        else "Populated vs empty/null (raw = post)"
+        if has_processed
+        else "Raw field scores",
         fontsize=11,
         pad=40,
     )
@@ -796,6 +862,7 @@ def render(data: dict, output: Path) -> None:
 def captions(data: dict) -> str:
     models = data["models"]
     has_processed = all(model["processed_overall"] is not None for model in models)
+    rescored = has_processed and data["processing_version"] != PROCESSING_VERSION
     lines = [
         "# Supervisor Report Figures",
         "",
@@ -813,10 +880,17 @@ def captions(data: dict) -> str:
             f"Post-processing source: **{data['processing_origin']}**, "
             f"version `{data['processing_version']}`. Raw and processed views use the same "
             "provider/case/pass attempts; they are not additional requests or independent samples.",
-            "Only missing_fields is changed. Invalid outputs remain invalid. All original raw "
-            "fields are preserved for an external replay, whose source hashes must match this run.",
-            "Populated/empty field scores, hallucination, and schema validity are unchanged by "
-            "this processing. Complete-case and missing-field-list accuracy can improve.",
+            (
+                "Repairs resolve contradictions inside each output using only its own values; "
+                "needs_clarification is never lowered. Invalid outputs remain invalid. "
+                "Field scores and hallucination can change; schema validity cannot."
+                if rescored
+                else "Only missing_fields is changed. Invalid outputs remain invalid. "
+                "Populated/empty field scores, hallucination, and schema validity are unchanged "
+                "by this processing. Complete-case and missing-field-list accuracy can improve."
+            ),
+            "All original raw fields are preserved for an external replay, whose source hashes "
+            "must match this run.",
             "",
         ]
     else:
@@ -862,7 +936,8 @@ def captions(data: dict) -> str:
                 if has_processed
                 else "Only raw rows are shown. "
             )
-            + "Category attempt counts are annotated; repeated passes are not independent cases.",
+            + "Each cell shows its attempt count n; repeated passes are not independent cases. "
+            "Trait columns (v3) overlap the primary categories and must not be summed with them.",
         ),
         (
             "04_latency_distribution",
@@ -901,7 +976,11 @@ def captions(data: dict) -> str:
             "not a diagnosis of model intent. "
             "Different valid subsets prevent interpreting this rate independently of validity. "
             + (
-                "Missing-field processing leaves both rates unchanged; no redundant bars are added."
+                "Faded bars are raw hallucination, solid bars post-processed; "
+                "validity is unchanged."
+                if rescored
+                else "Missing-field processing leaves both rates unchanged; "
+                "no redundant bars are added."
                 if has_processed
                 else "Post-processed rates are unavailable."
             ),
@@ -915,7 +994,12 @@ def captions(data: dict) -> str:
             "is not equivalent to correct constraint extraction. Those field scores exclude "
             "missing_fields. "
             + (
-                "These scores are unchanged after processing. The second panel compares exact "
+                (
+                    "Faded bars are raw, solid bars post-processed field scores. "
+                    if rescored
+                    else "These scores are unchanged after processing. "
+                )
+                + "The second panel compares exact "
                 "missing-field-list accuracy before and after processing, divided by ALL attempts. "
                 "Invalid outputs get no credit, even when the gold missing-field list is empty."
                 if has_processed
@@ -1003,7 +1087,7 @@ def main() -> None:
         help="Matching offline replay for an older run without processed metrics",
     )
     parser.add_argument(
-        "--cases", type=Path, help="Matching gold JSONL; defaults to benchmark cases.jsonl"
+        "--cases", type=Path, help="Gold JSONL; defaults to the dataset matching the run's hash"
     )
     args = parser.parse_args()
     output = args.output or args.run / "figures"

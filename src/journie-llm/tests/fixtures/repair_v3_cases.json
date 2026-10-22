@@ -1,0 +1,190 @@
+[
+ {
+  "source": "data/run5-semantic-v2/results.jsonl",
+  "provider": "gemini",
+  "test_case_id": "noisy-10",
+  "pass": 1,
+  "user_input": "Mã đơn 20261003 không phải ngày đi. Tôi đến Cần Thơ, bắt đầu 2026-11-20.",
+  "parsed_output": {
+   "destination": "Can Tho",
+   "start_date": "2026-11-20",
+   "end_date": null,
+   "duration_days": null,
+   "budget_vnd": null,
+   "budget_scope": null,
+   "available_start": null,
+   "available_end": null,
+   "interests": [],
+   "must_visit": [],
+   "avoid": [],
+   "preferred_places": [],
+   "hard_constraints": [
+    {
+     "field": "destination",
+     "operator": "eq",
+     "value": "Can Tho"
+    },
+    {
+     "field": "start_date",
+     "operator": "eq",
+     "value": "2026-11-20"
+    },
+    {
+     "field": "other",
+     "operator": "eq",
+     "value": "Mã đơn 20261003 không phải ngày đi."
+    }
+   ],
+   "soft_constraints": [],
+   "missing_fields": [
+    "travel_dates_or_duration",
+    "budget",
+    "available_time"
+   ],
+   "possible_conflicts": [],
+   "needs_clarification": false
+  }
+ },
+ {
+  "source": "data/run4-semantic/results.jsonl",
+  "provider": "gemini",
+  "test_case_id": "noisy-06",
+  "pass": 3,
+  "user_input": "HCMC / Saigon / TP.HCM — cùng một nơi tôi muốn đến. Thích cafe, cà phê, cafe.",
+  "parsed_output": {
+   "destination": "Ho Chi Minh City",
+   "start_date": null,
+   "end_date": null,
+   "duration_days": null,
+   "budget_vnd": null,
+   "budget_scope": null,
+   "available_start": null,
+   "available_end": null,
+   "interests": [
+    "cafe"
+   ],
+   "must_visit": [],
+   "avoid": [],
+   "preferred_places": [],
+   "hard_constraints": [
+    {
+     "field": "destination",
+     "operator": "eq",
+     "value": "Ho Chi Minh City"
+    }
+   ],
+   "soft_constraints": [
+    {
+     "field": "interests",
+     "operator": "prefer",
+     "value": "cafe"
+    },
+    {
+     "field": "interests",
+     "operator": "prefer",
+     "value": "cà phê"
+    },
+    {
+     "field": "interests",
+     "operator": "prefer",
+     "value": "cafe"
+    }
+   ],
+   "missing_fields": [
+    "travel_dates_or_duration",
+    "budget",
+    "available_time"
+   ],
+   "possible_conflicts": [],
+   "needs_clarification": false
+  }
+ },
+ {
+  "source": "data/run1/results.jsonl",
+  "provider": "lmstudio-gemma",
+  "test_case_id": "missing-04",
+  "pass": 3,
+  "user_input": "Giờ rảnh kết thúc lúc 19:10, thích biển.",
+  "parsed_output": {
+   "destination": null,
+   "start_date": null,
+   "end_date": null,
+   "duration_days": null,
+   "budget_vnd": null,
+   "budget_scope": null,
+   "available_start": null,
+   "available_end": "19:10",
+   "interests": [],
+   "must_visit": [],
+   "avoid": [],
+   "preferred_places": [],
+   "hard_constraints": [
+    {
+     "field": "available_end",
+     "operator": "eq",
+     "value": "19:10"
+    }
+   ],
+   "soft_constraints": [
+    {
+     "field": "interests",
+     "operator": "prefer",
+     "value": "beach"
+    }
+   ],
+   "missing_fields": [
+    "destination",
+    "travel_dates_or_duration",
+    "budget",
+    "available_time"
+   ],
+   "possible_conflicts": [],
+   "needs_clarification": false
+  }
+ },
+ {
+  "source": "data/run1/results.jsonl",
+  "provider": "lmstudio-gemma",
+  "test_case_id": "multiple-09",
+  "pass": 1,
+  "user_input": "Phải ghé Gallery D. Ở Gallery D chính xác 90 phút; thích bảo tàng.",
+  "parsed_output": {
+   "destination": null,
+   "start_date": null,
+   "end_date": null,
+   "duration_days": null,
+   "budget_vnd": null,
+   "budget_scope": null,
+   "available_start": null,
+   "available_end": null,
+   "interests": [],
+   "must_visit": [
+    "Gallery D"
+   ],
+   "avoid": [],
+   "preferred_places": [],
+   "hard_constraints": [
+    {
+     "field": "visit_duration_min",
+     "operator": "eq",
+     "value": "Gallery D:90"
+    }
+   ],
+   "soft_constraints": [
+    {
+     "field": "interests",
+     "operator": "prefer",
+     "value": "museum"
+    }
+   ],
+   "missing_fields": [
+    "destination",
+    "travel_dates_or_duration",
+    "budget",
+    "available_time"
+   ],
+   "possible_conflicts": [],
+   "needs_clarification": false
+  }
+ }
+]

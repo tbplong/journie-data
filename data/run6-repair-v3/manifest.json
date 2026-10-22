@@ -1,0 +1,279 @@
+{
+  "experiment": "offline_replay",
+  "complete": true,
+  "created_at": "2026-10-22T14:03:54.604726+00:00",
+  "source_manifest_sha256": "f82817604d29ebc1b615176ccad63f4019dacedb2947d7b8ea5d6448d8681a8d",
+  "source_results_sha256": "af5291c80944bb2810bac021e50740eb6ee4fcfed4f87652258266eb65d698df",
+  "cases_sha256": "f58b495b87551a718cb5d01cdebbc1723b419ffb491d36c087f3f7230b3bd27b",
+  "source_summary_sha256": "3d408ea598a9e9ff8c4c3e91274f3c58b45e6291b39944edcf49f7a305441753",
+  "schema_sha256": "7da717a07c0654efc2c927b8373dbd8d1f84f10799ed4882815fad3df6d0d680",
+  "schema": {
+    "$defs": {
+      "Constraint": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "enum": [
+              "destination",
+              "start_date",
+              "end_date",
+              "duration_days",
+              "budget_vnd",
+              "available_start",
+              "available_end",
+              "interests",
+              "must_visit",
+              "avoid",
+              "preferred_places",
+              "visit_duration_min",
+              "other"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "operator": {
+            "enum": [
+              "eq",
+              "min",
+              "max",
+              "include",
+              "exclude",
+              "prefer"
+            ],
+            "title": "Operator",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "operator",
+          "value"
+        ],
+        "title": "Constraint",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "destination": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Destination"
+      },
+      "start_date": {
+        "anyOf": [
+          {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Start Date"
+      },
+      "end_date": {
+        "anyOf": [
+          {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "End Date"
+      },
+      "duration_days": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Duration Days"
+      },
+      "budget_vnd": {
+        "anyOf": [
+          {
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Budget Vnd"
+      },
+      "budget_scope": {
+        "anyOf": [
+          {
+            "enum": [
+              "total",
+              "per_person"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Budget Scope"
+      },
+      "available_start": {
+        "anyOf": [
+          {
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Available Start"
+      },
+      "available_end": {
+        "anyOf": [
+          {
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Available End"
+      },
+      "interests": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Interests",
+        "type": "array"
+      },
+      "must_visit": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Must Visit",
+        "type": "array"
+      },
+      "avoid": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Avoid",
+        "type": "array"
+      },
+      "preferred_places": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Preferred Places",
+        "type": "array"
+      },
+      "hard_constraints": {
+        "items": {
+          "$ref": "#/$defs/Constraint"
+        },
+        "title": "Hard Constraints",
+        "type": "array"
+      },
+      "soft_constraints": {
+        "items": {
+          "$ref": "#/$defs/Constraint"
+        },
+        "title": "Soft Constraints",
+        "type": "array"
+      },
+      "missing_fields": {
+        "items": {
+          "enum": [
+            "destination",
+            "travel_dates_or_duration",
+            "budget",
+            "available_time"
+          ],
+          "type": "string"
+        },
+        "title": "Missing Fields",
+        "type": "array"
+      },
+      "possible_conflicts": {
+        "items": {
+          "enum": [
+            "date_order",
+            "time_order",
+            "duration_disagreement",
+            "budget_disagreement",
+            "must_visit_avoid",
+            "destination_disagreement"
+          ],
+          "type": "string"
+        },
+        "title": "Possible Conflicts",
+        "type": "array"
+      },
+      "needs_clarification": {
+        "title": "Needs Clarification",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "destination",
+      "start_date",
+      "end_date",
+      "duration_days",
+      "budget_vnd",
+      "budget_scope",
+      "available_start",
+      "available_end",
+      "interests",
+      "must_visit",
+      "avoid",
+      "preferred_places",
+      "hard_constraints",
+      "soft_constraints",
+      "missing_fields",
+      "possible_conflicts",
+      "needs_clarification"
+    ],
+    "title": "Extraction",
+    "type": "object"
+  },
+  "prompt_sha256": "0cea4d7197dfb3a6107b5c9088fbdedadd6352fe346f1b3dd5bb31962bd5b279",
+  "prompt_variant": "semantic-v3",
+  "prompt_version": "semantic-v3",
+  "processing_version": "repair-v3",
+  "diagnostics_version": "consistency-v2",
+  "processing_policy": "repair-v2 plus destination and interest aliases mapped to canonical names (name_aliases.csv)",
+  "annotation_status": "draft; human review required",
+  "providers": [
+    {
+      "name": "gemini",
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite"
+    }
+  ],
+  "passes": 3,
+  "case_count": 146,
+  "measured_requests": 438,
+  "new_model_requests": 0,
+  "new_tokens": 0,
+  "validation_seconds": null,
+  "extraction_pipeline_latency_seconds": null,
+  "timing_policy": "historical validation retained if recorded; pipeline unknown; postprocessing measured during replay"
+}

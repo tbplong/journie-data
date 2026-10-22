@@ -13,30 +13,36 @@ from benchmark import (
     add_processing,
     fingerprint,
     load_cases,
+    matching_cases,
     summarize,
     summarize_processed,
+    summary_groups,
     write_summaries,
 )
-from processing import DIAGNOSTICS_VERSION, PROCESSING_VERSION
+from processing import DIAGNOSTICS_VERSION, PROCESSING_POLICIES, PROCESSING_VERSION, PROCESSORS
 from prompts import PROMPT_VERSIONS, RESPONSE_SCHEMA
 from pydantic import ValidationError
 from schema import Extraction, score
 
-HERE = Path(__file__).resolve().parent
 PROCESSING_FIELDS = {
     "processed_output",
     "processed_metrics",
     "consistency_issues",
     "missing_fields_changed",
+    "repairs",
     "postprocessing_seconds",
     "extraction_pipeline_latency_seconds",
 }
 
 
-def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
+def replay(
+    run: Path,
+    output: Path,
+    cases: Path | None = None,
+    processing: str = PROCESSING_VERSION,
+) -> list[dict]:
     """Validate a complete source run, then write an exclusively created sibling report."""
     run, output = run.resolve(), output.resolve()
-    cases = (cases or HERE / "cases.jsonl").resolve()
     if output == run or output.is_relative_to(run):
         raise ValueError("Output must not be the source run or a descendant of it")
     if output.exists():
@@ -45,6 +51,7 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
     manifest_bytes = (run / "manifest.json").read_bytes()
     results_bytes = (run / "results.jsonl").read_bytes()
     source = json.loads(manifest_bytes)
+    cases = (cases or matching_cases(source.get("cases_sha256"))).resolve()
     if source.get("complete") is not True:
         raise ValueError("Source run must be complete")
     if not isinstance(source.get("system_prompt"), str) or fingerprint(
@@ -88,6 +95,16 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
     rows = [json.loads(line) for line in results_bytes.splitlines() if line.strip()]
     if len(rows) != len(expected) or source.get("measured_requests") != len(expected):
         raise ValueError("Incomplete source results: expected provider/case/pass count differs")
+    inline = [isinstance(row, dict) and bool(PROCESSING_FIELDS.intersection(row)) for row in rows]
+    if any(inline) and not all(inline):
+        raise ValueError("Only some source results are already processed")
+    # Inline processing is derived from raw fields; it is recomputed in the replay's copy only.
+    rows = [
+        {key: value for key, value in row.items() if key not in PROCESSING_FIELDS}
+        if isinstance(row, dict)
+        else row
+        for row in rows
+    ]
     seen = set()
     parsed_rows = []
     for row in rows:
@@ -95,8 +112,6 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
             raise ValueError("Source result must be an object")
         if row.get("warmup") is not False:
             raise ValueError("Warmup or missing warmup flag in measured results")
-        if PROCESSING_FIELDS.intersection(row):
-            raise ValueError("Source results are already processed; refusing to overwrite fields")
         provider, case_id, index = row.get("provider"), row.get("test_case_id"), row.get("pass")
         if not isinstance(provider, str) or provider not in models:
             raise ValueError("Unknown source result provider")
@@ -192,7 +207,7 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
     enhanced = copy.deepcopy(rows)
     for row, parsed in zip(enhanced, parsed_rows, strict=True):
         row.setdefault("validation_seconds", None)
-        add_processing(row, parsed, gold[row["test_case_id"]].expected_output)
+        add_processing(row, parsed, gold[row["test_case_id"]].expected_output, processing)
         # Today's processing time cannot reconstruct the historical extraction pipeline.
         row["extraction_pipeline_latency_seconds"] = None
 
@@ -218,18 +233,10 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
         name, model = config["name"], config["model"]
         raw_group = [row for row in rows if row["provider"] == name]
         group = [row for row in enhanced if row["provider"] == name]
-        categories = ["overall", *sorted({case.category for case in gold.values()})]
-        for category in categories:
-            selected_raw = (
-                raw_group
-                if category == "overall"
-                else [row for row in raw_group if row["category"] == category]
-            )
-            selected = (
-                group
-                if category == "overall"
-                else [row for row in group if row["category"] == category]
-            )
+        groups = {"overall": set(gold), **summary_groups(list(gold.values()))}
+        for category, ids in groups.items():
+            selected_raw = [row for row in raw_group if row["test_case_id"] in ids]
+            selected = [row for row in group if row["test_case_id"] in ids]
             wall = wall_times[name] if category == "overall" else None
             summary_identity = {"provider": name, "model": model, "category": category}
             raw_summaries.append({**summary_identity, **summarize(selected_raw, wall)})
@@ -238,13 +245,16 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
                     **summary_identity,
                     **summarize_processed(selected, wall),
                     "experiment": "offline_replay",
-                    "processing_version": PROCESSING_VERSION,
+                    "processing_version": processing,
                     "diagnostics_version": DIAGNOSTICS_VERSION,
                 }
             )
         original = [row["metrics"]["complete_case_accuracy"] for row in group]
         processed = [row["processed_metrics"]["complete_case_accuracy"] for row in group]
-        changed = sum(row["missing_fields_changed"] for row in group)
+        changed = sum(
+            row["processed_output"] is not None and row["processed_output"] != row["parsed_output"]
+            for row in group
+        )
         gained = sum(not old and bool(new) for old, new in zip(original, processed, strict=True))
         lost = sum(bool(old) and not new for old, new in zip(original, processed, strict=True))
         checked = sum(row["consistency_issues"] is not None for row in group)
@@ -253,6 +263,25 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
             f"| {label} | {len(group)} | {sum(original)} | {sum(processed)} | "
             f"{changed} | {gained} | {lost} | {checked} |"
         )
+    repaired = [row for row in enhanced if set(row["repairs"] or []) - {"missing_fields"}]
+    report += ["", "## Repaired Outputs", ""]
+    report += (
+        [
+            "Every output changed beyond missing_fields; gold is used only for the exact columns.",
+            "",
+            "| Provider | Case | Pass | Repairs | Exact before | Exact after |",
+            "| --- | --- | ---: | --- | ---: | ---: |",
+        ]
+        + [
+            f"| {row['provider']} | {row['test_case_id']} | {row['pass']} | "
+            f"{', '.join(dict.fromkeys(row['repairs']))} | "
+            f"{row['metrics']['complete_case_accuracy']} | "
+            f"{row['processed_metrics']['complete_case_accuracy']} |"
+            for row in repaired
+        ]
+        if repaired
+        else ["None."]
+    )
     variant = source.get("prompt_variant", "legacy_baseline")
     if variant not in PROMPT_VERSIONS and variant != "legacy_baseline":
         raise ValueError("Unknown source prompt variant")
@@ -276,9 +305,9 @@ def replay(run: Path, output: Path, cases: Path | None = None) -> list[dict]:
         "prompt_sha256": prompt_hash,
         "prompt_variant": variant,
         "prompt_version": PROMPT_VERSIONS.get(variant),
-        "processing_version": PROCESSING_VERSION,
+        "processing_version": processing,
         "diagnostics_version": DIAGNOSTICS_VERSION,
-        "processing_policy": "only missing_fields changed; diagnostics never repair",
+        "processing_policy": PROCESSING_POLICIES[processing],
         "annotation_status": source.get("annotation_status", "draft; human review required"),
         "providers": safe_configs,
         "passes": passes,
@@ -308,16 +337,19 @@ def main() -> None:
     parser.add_argument(
         "--run", type=Path, required=True, help="Complete source run, e.g. data/run1"
     )
-    parser.add_argument("--cases", type=Path, default=HERE / "cases.jsonl")
+    parser.add_argument(
+        "--cases", type=Path, help="Gold JSONL; defaults to the dataset matching the run's hash"
+    )
     parser.add_argument(
         "--output",
         type=Path,
         required=True,
         help="New directory outside source run; e.g. data/run1-processing",
     )
+    parser.add_argument("--processing", choices=tuple(PROCESSORS), default=PROCESSING_VERSION)
     args = parser.parse_args()
     try:
-        replay(args.run, args.output, args.cases)
+        replay(args.run, args.output, args.cases, args.processing)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         parser.error(str(exc))
 

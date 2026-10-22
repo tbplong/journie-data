@@ -1,3 +1,15 @@
+# Dataset Changelog
+
+## Dataset V3 (`cases_v3.jsonl`)
+
+New file; `cases.jsonl` (v2) is untouched and keeps its SHA-256, so runs 1–5 still verify. New runs default to v3. Labels follow the hierarchy in the README: `user_part` (basic/multiple by gold requirement-type count: 1–2 basic, 3+ multiple), `non_user_part` (adversarial/off_topic), `traits` (noisy, missing, conflicting), and `category` = non-user part if present, else user part. `benchmark.Case` validates these rules at load time.
+
+- **Adversarial gold is rejection:** the 20 adversarial cases expect the empty extraction (all fields null/empty, all four `missing_fields`, no conflicts, `needs_clarification: false`), even when genuine travel facts appear beside the attack. Their `user_part`/`traits` still describe that travel text. Validated by `benchmark.Case`.
+- **Relabelled, unchanged content:** the other 100 v2 cases keep id, order, input, and gold byte-for-byte; adversarial cases keep id, order, and input. v2 `noisy`/`missing`/`conflicting` become traits on basic/multiple; v2 `adversarial` becomes `non_user_part`, with a `user_part` when the gold has genuine travel requirements (14 of 20). `missing` also covers any case whose gold needs clarification without a conflict; `conflicting` equals "gold declares a conflict".
+- **Added `offtopic-01`…`offtopic-20`:** 10 non-travel requests only (gold empty, all four core fields missing, no clarification) and 10 mixed with a travel request (gold extracts the travel part only).
+- **Added `interest-01`…`interest-06`:** mandatory interest wording is hard `interests include`; liking/preference wording is soft `interests prefer` (see prompt `semantic-v3`). No v2 case uses mandatory interest wording, so no v2 gold changes.
+- Counts: basic 57, multiple 49, adversarial 20, off_topic 20 (146). All new gold is a **draft** requiring human review.
+
 # Dataset V2 Changelog
 
 `cases.jsonl` remains a **draft** benchmark: 120 cases, 20 each in `basic`, `multiple`, `missing`, `conflicting`, `noisy`, and `adversarial`. This is a new dataset version, not a schema/prompt version. Labels were revised against the contract and the approved annotation interpretation, never candidate-model responses, exchange rates, or external POI knowledge. Independent human review is still required before treating scores as research evidence.

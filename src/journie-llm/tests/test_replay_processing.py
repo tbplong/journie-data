@@ -208,7 +208,7 @@ def test_replay_preserves_raw_and_writes_separate_summaries(source):
         ("metrics", "Raw metrics"),
         ("bad_valid", "parsed_output"),
         ("validation_flag", "validation_result"),
-        ("already_processed", "already processed"),
+        ("already_processed", "Only some source results are already processed"),
         ("gold_mirror", "expected_missing_fields"),
     ],
 )
@@ -302,9 +302,9 @@ def test_cli_and_recorded_validation_time(source, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_cli_default_sibling_cases_and_required_output(source, monkeypatch):
+def test_cli_default_hash_matched_cases_and_required_output(source, monkeypatch):
     run, cases, output, _, _ = source
-    monkeypatch.setattr(replay, "HERE", cases.parent)
+    monkeypatch.setattr(benchmark, "HERE", cases.parent)
     monkeypatch.setattr(
         sys, "argv", ["replay_processing.py", "--run", str(run), "--output", str(output)]
     )
@@ -314,3 +314,25 @@ def test_cli_default_sibling_cases_and_required_output(source, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         replay.main()
     assert exc.value.code == 2
+
+
+def test_repair_v2_replays_an_inline_processed_source(source):
+    run, cases, output, original, _ = source
+    gold = benchmark.load_cases(cases)[0].expected_output
+    inline = copy.deepcopy(original)
+    for row in inline:
+        row.setdefault("validation_seconds", None)
+        parsed = Extraction.model_validate(row["parsed_output"]) if row["schema_valid"] else None
+        benchmark.add_processing(row, parsed, gold)
+    (run / "results.jsonl").write_text("\n".join(json.dumps(row) for row in inline))
+    before = (run / "results.jsonl").read_bytes()
+    enhanced = replay.replay(run, output, cases, "repair-v2")
+    assert (run / "results.jsonl").read_bytes() == before
+    for old, new in zip(original, enhanced, strict=True):
+        assert {key: new[key] for key in old} == old
+        # The fixture's valid output has a stale missing_fields list and nothing else to repair.
+        assert new["repairs"] == (["missing_fields"] if old["schema_valid"] else None)
+    new_manifest = json.loads((output / "manifest.json").read_text())
+    assert new_manifest["processing_version"] == "repair-v2"
+    assert "never lowered" in new_manifest["processing_policy"]
+    assert "## Repaired Outputs\n\nNone." in (output / "report.md").read_text()

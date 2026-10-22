@@ -8,10 +8,13 @@ from typing import Any
 
 import pytest
 from benchmark import summarize
-from plot_report import CATEGORIES, OUTCOMES, aggregate, captions
+from plot_report import OUTCOMES, aggregate, captions
 from plot_report import load_run as load_report
-from processing import PROCESSING_VERSION, process_extraction
+from processing import PROCESSING_VERSION, PROCESSORS, process_extraction
 from schema import Extraction, score
+
+# Dataset v2 category order, as in cases.jsonl.
+CATEGORIES = ("basic", "multiple", "missing", "conflicting", "noisy", "adversarial")
 
 
 def test_report_outcomes_and_denominators():
@@ -121,7 +124,13 @@ def fixture_rows() -> list[dict[str, Any]]:
 
 
 def write_run(
-    run: Path, rows: list[dict[str, Any]], *, inline: bool = False, source: Path | None = None
+    run: Path,
+    rows: list[dict[str, Any]],
+    *,
+    inline: bool = False,
+    source: Path | None = None,
+    traits: dict[str, list[str]] | None = None,
+    processing: str = PROCESSING_VERSION,
 ) -> None:
     run.mkdir()
     cases = run.parent / "cases.jsonl"
@@ -131,6 +140,7 @@ def write_run(
                 {
                     "id": f"case-{category}",
                     "category": category,
+                    **({"traits": traits.get(f"case-{category}", [])} if traits else {}),
                     "expected_output": fixture_gold().model_dump(),
                 }
             )
@@ -151,7 +161,7 @@ def write_run(
         "prompt_variant": "synthetic",
     }
     if inline or source is not None:
-        manifest["processing_version"] = PROCESSING_VERSION
+        manifest["processing_version"] = processing
     if source is not None:
         for name in ("manifest.json", "results.jsonl", "summary.json"):
             stem = name.removesuffix(".jsonl").removesuffix(".json")
@@ -173,11 +183,17 @@ def write_run(
         if key == "processed_metrics" and not (inline or source is not None):
             continue
         summaries = []
-        for category in ("overall", *CATEGORIES):
+        trait_groups = sorted({f"trait:{t}" for values in (traits or {}).values() for t in values})
+        for category in ("overall", *CATEGORIES, *trait_groups):
             selected = [
                 {**row, "metrics": row[key]}
                 for row in rows
-                if category == "overall" or row["category"] == category
+                if category in ("overall", row["category"])
+                or (
+                    category.startswith("trait:")
+                    and category.removeprefix("trait:")
+                    in (traits or {}).get(row["test_case_id"], [])
+                )
             ]
             summaries.append(
                 {
@@ -252,8 +268,10 @@ def test_load_run_separates_raw_and_inline_stages(tmp_path: Path, inline: bool) 
 def test_matching_gold_is_required(tmp_path: Path) -> None:
     run = tmp_path / "run"
     write_run(run, fixture_rows(), inline=True)
-    with pytest.raises(ValueError, match="Gold case-file hash differs"):
+    with pytest.raises(ValueError, match="No dataset file matches"):
         load_report(run)
+    with pytest.raises(ValueError, match="Gold case-file hash differs"):
+        load_report(run, cases=Path(__file__).resolve().parents[1] / "cases_v3.jsonl")
 
 
 @pytest.mark.parametrize(
@@ -412,3 +430,44 @@ def test_count_warning_and_captions_use_actual_single_model_grid(tmp_path: Path)
     assert "offline-test-model" in text
     for unsupported_claim in ("Gemini", "Cloud Gemma", "LM Studio", "Three passes", "four cases"):
         assert unsupported_claim not in text
+
+
+def test_v3_traits_add_overlapping_columns(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    traits = {"case-basic": ["missing"], "case-missing": ["missing"], "case-noisy": ["noisy"]}
+    write_run(run, fixture_rows(), inline=True, traits=traits)
+    data = load_run(run)
+    model = data["models"][0]
+    assert list(model["categories"]) == [*CATEGORIES, "trait:missing", "trait:noisy"]
+    assert list(model["processed_categories"]) == list(model["categories"])
+    assert model["categories"]["trait:missing"]["requests"] == 2
+    assert model["categories"]["trait:noisy"] == model["categories"]["noisy"]
+    assert "Trait columns (v3) overlap" in captions(data)
+
+
+def test_repair_v2_inline_is_verified_and_captioned(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    rows = fixture_rows()
+    for row in rows:
+        if row["schema_valid"]:
+            parsed = Extraction.model_validate(row["parsed_output"])
+            row["processed_output"] = PROCESSORS["repair-v2"](parsed)[0].model_dump()
+    write_run(run, rows, inline=True, processing="repair-v2")
+    data = load_run(run)
+    assert data["processing_version"] == "repair-v2"
+    assert "Repairs resolve contradictions" in captions(data)
+    saved = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines()]
+    next(row for row in saved if row["schema_valid"])["processed_output"]["destination"] = "x"
+    (run / "results.jsonl").write_text("".join(json.dumps(row) + "\n" for row in saved))
+    with pytest.raises(ValueError, match="deterministic repair-v2 processing"):
+        load_run(run)
+
+
+def test_replay_supersedes_inline_processing(tmp_path: Path) -> None:
+    run, replay = tmp_path / "raw", tmp_path / "replay"
+    rows = fixture_rows()
+    write_run(run, rows, inline=True)
+    write_run(replay, rows[::-1], source=run)
+    data = load_run(run, replay)
+    assert data["processing_origin"] == "offline replay"
+    assert data["models"][0]["processed_overall"] == aggregate(rows, "processed_metrics")

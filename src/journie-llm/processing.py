@@ -1,12 +1,19 @@
-"""Source-independent missing-field derivation and read-only consistency checks."""
+"""Source-independent output processing and read-only consistency checks."""
 
+import csv
+import unicodedata
 from collections.abc import Callable, Iterable
 from datetime import date
+from functools import partial
+from pathlib import Path
 
+from pydantic import ValidationError
 from schema import Extraction, canonical
 
 PROCESSING_VERSION = "missing-fields-v1"
-DIAGNOSTICS_VERSION = "consistency-v1"
+REPAIR_VERSION = "repair-v2"
+REPAIR_V3_VERSION = "repair-v3"
+DIAGNOSTICS_VERSION = "consistency-v2"
 
 MISSING_FIELD_RULES: dict[str, tuple[tuple[str, ...], Callable[[Iterable[bool]], bool]]] = {
     "destination": (("destination",), all),
@@ -21,6 +28,8 @@ LIST_ATOM_RULES = {
     "must_visit": ("hard_constraints", "include"),
     "avoid": ("hard_constraints", "exclude"),
 }
+# semantic-v3: an interest the user states as mandatory is hard include.
+LIST_ATOM_ALTERNATIVES = {"interests": ("hard_constraints", "include")}
 
 SCALAR_ATOM_OPERATORS = {
     "destination": ("eq",),
@@ -47,6 +56,207 @@ def process_extraction(extraction: Extraction) -> Extraction:
     )
 
 
+def place_key(name: str) -> str:
+    """Match key: Unicode NFC, case-insensitive, ignoring spaces, dots, hyphens, underscores.
+    Accents are kept; unaccented spellings are listed explicitly in the alias table."""
+    key = unicodedata.normalize("NFC", name).casefold()
+    return "".join(char for char in key if char not in " .-_\t")
+
+
+def load_name_aliases(path: Path) -> dict[str, dict[str, str]]:
+    """kind ("destination"/"interest") -> alias key -> canonical name, from kind,canonical,alias."""
+    aliases: dict[str, dict[str, str]] = {"destination": {}, "interest": {}}
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            table, standard = aliases[row["kind"]], row["canonical"]
+            for name in (standard, row["alias"]):
+                if table.setdefault(place_key(name), standard) != standard:
+                    raise ValueError(f"Alias {name!r} maps to two canonical names")
+    return aliases
+
+
+NAME_ALIASES = load_name_aliases(Path(__file__).with_name("name_aliases.csv"))
+# Atom/list fields whose values are names from each alias table.
+ALIAS_FIELDS = {"destination": "destination", "interests": "interest"}
+
+
+def standard_name(field: str, value: str) -> str:
+    return NAME_ALIASES[ALIAS_FIELDS[field]].get(place_key(value), value)
+
+
+def list_rules(field: str) -> tuple[tuple[str, str], ...]:
+    """Allowed (constraint list, operator) pairs for a list field."""
+    return (LIST_ATOM_RULES[field], *filter(None, [LIST_ATOM_ALTERNATIVES.get(field)]))
+
+
+def scalar_candidates(extraction: Extraction, field: str) -> set[str]:
+    """Constraint values that state a scalar; a budget cap outranks an exact budget."""
+    atoms = [atom for atom in extraction.hard_constraints if atom.field == field]
+    if field == "budget_vnd" and any(atom.operator == "max" for atom in atoms):
+        return {atom.value for atom in atoms if atom.operator == "max"}
+    return {atom.value for atom in atoms if atom.operator in SCALAR_ATOM_OPERATORS[field]}
+
+
+def observed_conflicts(extraction: Extraction) -> dict[str, bool | None]:
+    """Conflicts the output's own values prove (True) or disprove (False); None = unknown."""
+    conflicts: dict[str, bool | None] = {
+        "date_order": None,
+        "duration_disagreement": None,
+        "budget_disagreement": None,
+        "must_visit_avoid": bool(set(extraction.must_visit) & set(extraction.avoid)),
+    }
+    if extraction.start_date is not None and extraction.end_date is not None:
+        days = (
+            date.fromisoformat(extraction.end_date) - date.fromisoformat(extraction.start_date)
+        ).days + 1
+        conflicts["date_order"] = days < 1
+        if extraction.duration_days is not None:
+            conflicts["duration_disagreement"] = extraction.duration_days != days
+    bounds: dict[str, list[int]] = {"min": [], "max": []}
+    uncertain = False
+    for atom in extraction.hard_constraints:
+        if atom.field == "budget_vnd" and atom.operator in bounds:
+            if canonical_int(atom.value):
+                bounds[atom.operator].append(int(atom.value))
+            else:
+                uncertain = True
+    observed = any(minimum > maximum for minimum in bounds["min"] for maximum in bounds["max"])
+    # An unreadable bound leaves "no conflict" unproven, but not an observed conflict.
+    conflicts["budget_disagreement"] = True if observed else None if uncertain else False
+    return conflicts
+
+
+def canonical_int(value: str) -> bool:
+    return value.isascii() and value.isdigit() and str(int(value)) == value
+
+
+def repair_extraction(
+    extraction: Extraction, version: str = REPAIR_VERSION
+) -> tuple[Extraction, list[str]]:
+    """repair-v2/v3: resolve contradictions inside one output using only that output's values.
+
+    Never reads gold or user text and never lowers needs_clarification. Anything with more
+    than one plausible fix (e.g. hard prefer interests) is left for diagnostics. repair-v3
+    first maps destination and interest aliases to canonical names.
+    """
+    data = extraction.model_dump()
+    repairs: list[str] = []
+    if version == REPAIR_V3_VERSION:
+        # Map destination and interest aliases (name_aliases.csv) to canonical names first,
+        # so later dedupe and list sync see one spelling.
+        name = data["destination"]
+        if name is not None and standard_name("destination", name) != name:
+            data["destination"] = standard_name("destination", name)
+            repairs.append("canonical_name")
+        names = data["interests"]
+        data["interests"] = list(dict.fromkeys(standard_name("interests", v) for v in names))
+        if data["interests"] != names:
+            repairs.append("canonical_name")
+        for atom in data["hard_constraints"] + data["soft_constraints"]:
+            if atom["field"] in ALIAS_FIELDS:
+                standard = standard_name(atom["field"], atom["value"])
+                if standard != atom["value"]:
+                    atom["value"] = standard
+                    repairs.append("canonical_name")
+    for kind in ("hard_constraints", "soft_constraints"):
+        # Only exact repeats within one list; a hard/soft pair has no single right side.
+        seen: set[str] = set()
+        kept = []
+        for atom in data[kind]:
+            key = canonical(atom)
+            if key in seen:
+                repairs.append("dedupe_constraint")
+                continue
+            seen.add(key)
+            kept.append(atom)
+        data[kind] = kept
+
+    for field, (kind, operator) in LIST_ATOM_RULES.items():
+        rules = list_rules(field)
+        atom_values = [
+            atom["value"]
+            for kind_name, op in rules
+            for atom in data[kind_name]
+            if atom["field"] == field and atom["operator"] == op
+        ]
+        for value in dict.fromkeys(atom_values):
+            if value not in data[field]:
+                data[field].append(value)
+                repairs.append("list_from_constraint")
+        # Interest strength is unknown here, so no interest atom is added. A value that
+        # already has a misplaced atom (e.g. hard prefer) is left for diagnostics.
+        placed = {
+            atom["value"]
+            for kind_name in ("hard_constraints", "soft_constraints")
+            for atom in data[kind_name]
+            if atom["field"] == field
+        }
+        if len(rules) == 1:
+            for value in data[field]:
+                if value not in placed:
+                    data[kind].append({"field": field, "operator": operator, "value": value})
+                    repairs.append("constraint_from_list")
+
+    current = Extraction.model_validate(data)
+    for field in SCALAR_ATOM_OPERATORS:
+        candidates = scalar_candidates(current, field)
+        if len(candidates) != 1:
+            continue
+        stated = candidates.pop()
+        scalar: str | int = stated
+        if field in ("duration_days", "budget_vnd"):
+            if not canonical_int(stated):
+                continue
+            scalar = int(stated)
+        if data[field] == scalar:
+            continue
+        try:
+            Extraction.model_validate({**data, field: scalar})
+        except ValidationError:
+            continue
+        data[field] = scalar
+        repairs.append("scalar_from_constraint")
+
+    current = Extraction.model_validate(data)
+    declared = data["possible_conflicts"]
+    for conflict, present in observed_conflicts(current).items():
+        if present is True and conflict not in declared:
+            declared.append(conflict)
+            repairs.append("conflict_from_observation")
+        elif present is False and conflict in declared:
+            declared.remove(conflict)
+            repairs.append("conflict_from_observation")
+    if declared and not data["needs_clarification"]:
+        data["needs_clarification"] = True
+        repairs.append("clarification_from_conflict")
+
+    repaired = Extraction.model_validate(data)
+    missing = derive_missing_fields(repaired)
+    if missing != repaired.missing_fields:
+        repairs.append("missing_fields")
+    return repaired.model_copy(update={"missing_fields": missing}), repairs
+
+
+def process_v1(extraction: Extraction) -> tuple[Extraction, list[str]]:
+    processed = process_extraction(extraction)
+    changed = processed.missing_fields != extraction.missing_fields
+    return processed, ["missing_fields"] if changed else []
+
+
+PROCESSORS: dict[str, Callable[[Extraction], tuple[Extraction, list[str]]]] = {
+    PROCESSING_VERSION: process_v1,
+    REPAIR_VERSION: repair_extraction,
+    REPAIR_V3_VERSION: partial(repair_extraction, version=REPAIR_V3_VERSION),
+}
+PROCESSING_POLICIES = {
+    PROCESSING_VERSION: "only missing_fields changed; diagnostics never repair",
+    REPAIR_VERSION: "self-contradictions repaired from the output's own values; "
+    "needs_clarification never lowered; diagnostics never repair",
+    REPAIR_V3_VERSION: "repair-v2 plus destination and interest aliases mapped to "
+    "canonical names (name_aliases.csv)",
+}
+
+
 def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
     """Check representation consistency, not grounding, feasibility, or user intent."""
     issues: list[dict[str, str]] = []
@@ -63,8 +273,7 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
             seen.add(key)
             valid = True
             if atom.field in LIST_ATOM_RULES:
-                expected_kind, operator = LIST_ATOM_RULES[atom.field]
-                valid = kind == expected_kind and atom.operator == operator
+                valid = (kind, atom.operator) in list_rules(atom.field)
             elif kind == "soft_constraints":
                 valid = atom.operator == "prefer"
             elif atom.field == "destination":
@@ -93,11 +302,15 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
             report("missing_atom", field, "Populated scalar lacks a corresponding factual atom.")
         elif str(value) not in values:
             report("scalar_atom_mismatch", field, "Scalar differs from corresponding atom values.")
+    for field in SCALAR_ATOM_OPERATORS:
+        if getattr(extraction, field) is None and len(scalar_candidates(extraction, field)) == 1:
+            report("missing_scalar", field, "A factual atom states a value the scalar omits.")
 
-    for field, (kind, operator) in LIST_ATOM_RULES.items():
+    for field in LIST_ATOM_RULES:
         values = set(getattr(extraction, field))
         atom_values = {
             atom.value
+            for kind, operator in list_rules(field)
             for atom in getattr(extraction, kind)
             if atom.field == field and atom.operator == operator
         }
@@ -114,44 +327,19 @@ def consistency_issues(extraction: Extraction) -> list[dict[str, str]]:
         )
 
     # Only these conflicts have mechanically checkable evidence in the schema.
-    conflicts: dict[str, bool | None] = {
-        "date_order": None,
-        "duration_disagreement": None,
-        "budget_disagreement": False,
-        "must_visit_avoid": bool(set(extraction.must_visit) & set(extraction.avoid)),
-    }
-    if extraction.start_date is not None and extraction.end_date is not None:
-        days = (
-            date.fromisoformat(extraction.end_date) - date.fromisoformat(extraction.start_date)
-        ).days + 1
-        conflicts["date_order"] = days < 1
-        if extraction.duration_days is not None:
-            conflicts["duration_disagreement"] = extraction.duration_days != days
-    bounds: dict[str, list[int]] = {"min": [], "max": []}
-    uncertain_bound = False
+    conflicts = observed_conflicts(extraction)
     for atom in extraction.hard_constraints:
-        if atom.field != "budget_vnd" or atom.operator not in bounds:
-            continue
-        try:
-            value = int(atom.value)
-            if str(value) != atom.value:
-                raise ValueError("Not a canonical integer string")
-        except ValueError:
-            uncertain_bound = True
+        if (
+            atom.field == "budget_vnd"
+            and atom.operator in ("min", "max")
+            and not canonical_int(atom.value)
+        ):
             report(
                 "budget_bound_requires_review",
                 "budget_vnd",
                 "Budget bound cannot be checked as a canonical integer.",
                 "review",
             )
-        else:
-            bounds[atom.operator].append(value)
-    observed_budget_conflict = any(
-        minimum > maximum for minimum in bounds["min"] for maximum in bounds["max"]
-    )
-    conflicts["budget_disagreement"] = (
-        True if observed_budget_conflict else None if uncertain_bound else False
-    )
     for conflict, present in conflicts.items():
         declared = conflict in extraction.possible_conflicts
         if present is not None and present != declared:
